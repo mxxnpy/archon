@@ -138,6 +138,15 @@ void ControllerSession::handle_plain(const uint8_t* p, size_t n, Output& out) {
     }
 }
 
+bool ControllerSession::decode_app(const Bytes& msg, std::vector<ControllerEvent>& events) {
+    if (msg.empty()) return false;
+    ControllerSession s(Id16{}, std::string());
+    Output out;
+    s.handle_app(msg, out);
+    events = std::move(out.events);
+    return !out.close;
+}
+
 void ControllerSession::handle_app(const Bytes& msg, Output& out) {
     Reader r(msg.data() + 1, msg.size() - 1);
     using K = ControllerEvent::Kind;

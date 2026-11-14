@@ -150,6 +150,16 @@ public:
     virtual bool save(const Bytes& data) = 0;
 };
 
+// The agent's own window on the PC: sees exactly what a paired controller sees
+// (state dump, changes, meters, profiles, tabs) without network or pairing.
+// on_message gets plaintext application messages, on the server thread; it must
+// not block (post them to the UI thread).
+class LocalView {
+public:
+    virtual ~LocalView() = default;
+    virtual void on_message(const Bytes& msg) = 0;
+};
+
 class Server final : public AudioSink {
 public:
     Server(ServerConfig cfg, AudioBackend& backend, TrustStore& store, ServerObserver& observer);
@@ -183,6 +193,13 @@ public:
     void set_profile_store(ProfileStore* store) { profile_store_ = store; }
     // The PC's network changed (name of the network it is on, "" = none). Thread-safe.
     void network_changed(const std::string& name);
+    // The agent's own window. attach sends a full state dump, then every change;
+    // nullptr detaches (waits until no callback is running). Thread-safe.
+    void attach_local(LocalView* view);
+    // A command from that window: any controller application message
+    // (SET_ENDPOINT_VOLUME, SET_SOURCE_MUTE, PANIC_MUTE, SAVE_PROFILE, SET_METERS...).
+    // Listening on the phone is not available locally. Thread-safe.
+    void local_command(Bytes msg);
 
     // AudioSink (thread-safe)
     void endpoint_upsert(const EndpointInfo& e) override;

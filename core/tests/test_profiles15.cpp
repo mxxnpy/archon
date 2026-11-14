@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "archon/client.hpp"
+#include "archon/controller_session.hpp"
 #include "archon/profiles.hpp"
 #include "archon/server.hpp"
 #include "test.hpp"
@@ -549,4 +550,82 @@ TEST(v15_profiles_survive_an_agent_restart) {
     CHECK(eventually([&] { return ph2.l.named("Noite").has_value(); }));
     const Profile n = *ph2.l.named("Noite");
     CHECK(n.automatic && n.start_min == 22 * 60 && n.end_min == 7 * 60 && n.days == 0x7F);
+}
+
+// The agent's own window: same view as a phone, no network.
+namespace {
+class View : public LocalView {
+public:
+    std::mutex mu;
+    std::map<std::string, EndpointInfo> eps;
+    std::map<std::string, SourceInfo> srcs;
+    std::map<std::string, Profile> profiles;
+    uint32_t features = 0;
+    int levels = 0;
+    bool bad = false;
+    void on_message(const Bytes& msg) override {
+        std::vector<ControllerEvent> evs;
+        std::lock_guard<std::mutex> lk(mu);
+        if (!ControllerSession::decode_app(msg, evs)) bad = true;
+        for (auto& ev : evs) {
+            using K = ControllerEvent::Kind;
+            if (ev.kind == K::StateReset) eps.clear(), srcs.clear(), profiles.clear();
+            if (ev.kind == K::Endpoint) eps[ev.endpoint.id] = ev.endpoint;
+            if (ev.kind == K::Source) srcs[ev.source.id] = ev.source;
+            if (ev.kind == K::Profile) profiles[ev.profile.id] = ev.profile;
+            if (ev.kind == K::AgentInfo) features = ev.agent.features;
+            if (ev.kind == K::Meters) levels += int(ev.meters.size());
+        }
+    }
+};
+}  // namespace
+
+TEST(local_window_sees_the_mixer_and_controls_it) {
+    Rig rig;
+    REQUIRE(rig.started);
+    View v;
+    rig.srv->attach_local(&v);
+    CHECK(eventually([&] {
+        std::lock_guard<std::mutex> lk(v.mu);
+        return v.eps.count("OUT1") && v.srcs.size() == 2 && (v.features & kFeatureProfiles);
+    }));
+    // A command from the window reaches the OS, and the change comes back to it.
+    rig.srv->local_command(encode_set_mute(MsgType::SetEndpointMute, "OUT1", true));
+    CHECK(eventually([&] { return rig.be.ep_muted("OUT1"); }));
+    CHECK(eventually([&] {
+        std::lock_guard<std::mutex> lk(v.mu);
+        return v.eps["OUT1"].muted;
+    }));
+    rig.srv->local_command(encode_set_volume(MsgType::SetSourceVolume, "S1", 1234));
+    CHECK(eventually([&] { return rig.be.src("S1").volume == 1234; }));
+    // Profiles work from the window too.
+    Profile p;
+    p.name = "Do PC";
+    rig.srv->local_command(encode_profile(MsgType::SaveProfile, p, kProfileFlagCapture));
+    CHECK(eventually([&] {
+        std::lock_guard<std::mutex> lk(v.mu);
+        return v.profiles.size() == 1 && v.profiles.begin()->second.name == "Do PC";
+    }));
+    // Meters while the window shows the mixer.
+    rig.srv->local_command(encode_flag(MsgType::SetMeters, true));
+    CHECK(eventually([&] {
+        rig.srv->meters({{"OUT1", 200}});
+        std::lock_guard<std::mutex> lk(v.mu);
+        return v.levels > 0;
+    }));
+    // Listening on the phone is not offered to the window.
+    StreamStart ss;
+    ss.udp_port = 5000;
+    rig.srv->local_command(encode_stream_start(ss));
+    std::this_thread::sleep_for(50ms);
+    rig.srv->attach_local(nullptr);  // returns once no callback can run
+    const size_t eps_after = [&] {
+        std::lock_guard<std::mutex> lk(v.mu);
+        return v.eps.size();
+    }();
+    rig.be.set_endpoint_volume("OUT1", 999);  // changes after detaching are not delivered
+    std::this_thread::sleep_for(50ms);
+    std::lock_guard<std::mutex> lk(v.mu);
+    CHECK(!v.bad);
+    CHECK(v.eps.size() == eps_after && v.eps["OUT1"].volume != 999);
 }

@@ -44,6 +44,7 @@ struct Server::Conn {
     bool dead = false;           // close immediately
     bool half_closed = false;    // FIN sent after the final error; waiting for the peer
     bool listed = false;         // currently reported to the observer as connected
+    bool local = false;          // the agent's own window (no socket)
     bool streaming = false;      // 1.3: listening on the phone
     uint64_t stream_id = 0;      // unique per stream: a late failure of an old one cannot end a new one
     std::string stream_endpoint;
@@ -129,7 +130,7 @@ struct Server::Impl {
     }
 
     void start_stream(Conn& c, const StreamStart& req) {
-        if (!s.stream_service_) return send_stream_state(c, false, nullptr, ErrorCode::Busy);
+        if (!s.stream_service_ || c.local) return send_stream_state(c, false, nullptr, ErrorCode::Busy);
         std::string ep = req.endpoint_id;
         if (ep.empty())
             for (auto& [id, e] : endpoints)
@@ -256,7 +257,15 @@ struct Server::Impl {
         }
     }
 
+    // The agent's own window (see LocalView).
+    std::unique_ptr<Conn> local_conn;
+    LocalView* local_view = nullptr;
+
     void queue_app(Conn& c, const Bytes& msg) {
+        if (c.local) {
+            if (local_view) local_view->on_message(msg);
+            return;
+        }
         if (c.st != Conn::St::Ready || c.closing) return;
         queue_raw(c, c.channel.seal(msg));
     }
@@ -276,6 +285,7 @@ struct Server::Impl {
 
     void broadcast(const Bytes& msg) {
         for (auto& [id, c] : conns) queue_app(*c, msg);
+        if (local_conn) queue_app(*local_conn, msg);
     }
 
     AgentInfo agent_info() const {
@@ -568,6 +578,7 @@ struct Server::Impl {
         bool any = false;
         for (auto& [id, c] : conns)
             if (c->meters && c->st == Conn::St::Ready && !c->closing && !c->dead) any = true;
+        if (local_conn && local_conn->meters) any = true;
         if (any == metering) return;
         metering = any;
         s.backend_.set_metering(any);
@@ -1222,6 +1233,41 @@ void Server::stream_failed(uint64_t stream_id, ErrorCode reason) {
     });
 }
 
+void Server::attach_local(LocalView* view) {
+    auto done = std::make_shared<std::promise<void>>();
+    auto fut = done->get_future();
+    {
+        std::lock_guard<std::mutex> lk(life_mu_);
+        if (!impl_ || !running_.load()) return;
+    }
+    post([this, view, done] {
+        Impl& m = *impl_;
+        m.local_view = view;
+        if (view) {
+            if (!m.local_conn) {
+                m.local_conn = std::make_unique<Conn>();
+                m.local_conn->local = true;
+                m.local_conn->st = Conn::St::Ready;
+                m.local_conn->name = "this PC";
+            }
+            m.send_dump(*m.local_conn);
+        } else if (m.local_conn) {
+            m.local_conn.reset();
+            m.update_metering();
+        }
+        done->set_value();
+    });
+    // Detaching waits so no callback reaches a view being destroyed.
+    if (!view) fut.wait_for(std::chrono::seconds(2));
+}
+
+void Server::local_command(Bytes msg) {
+    if (msg.empty()) return;
+    post([this, msg = std::move(msg)] {
+        if (impl_->local_conn) impl_->on_app(*impl_->local_conn, msg);
+    });
+}
+
 void Server::network_changed(const std::string& name) {
     post([this, name] {
         if (impl_->network == name) return;
@@ -1334,6 +1380,7 @@ void Server::meters(const std::vector<std::pair<std::string, uint8_t>>& levels) 
                 if (!c->meters || c->out.size() - c->out_pos > 64 * 1024) continue;
                 impl_->queue_app(*c, msg);
             }
+            if (impl_->local_conn && impl_->local_conn->meters) impl_->queue_app(*impl_->local_conn, msg);
         }
     });
 }

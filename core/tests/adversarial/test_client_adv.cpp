@@ -212,13 +212,20 @@ TEST(adv_client_resubscribes_meters_after_agent_restart) {
     REQUIRE(rig2.port == port);
     REQUIRE(connected_and_synced(l, 1, 8000));
     CHECK(wait_until([&] { return rig2.backend.is_metering(); }, 2000));
-    rig2.server->meters({{"E1", 123}});
     uint16_t slot = 0;
     {
         std::lock_guard<std::mutex> lk(l.mu);
         slot = l.endpoints["E1"].meter;
     }
-    CHECK(wait_for(l.mu, [&] { return l.levels.count(slot) && l.levels[slot] == 123; }, 2000));
+    // Meters are disposable: one frame may be missed (dropped for a busy link, or
+    // sent a moment before the re-subscription lands; seen once under ASan on
+    // Linux). The product sends them at ~20 Hz, so the test keeps sending too.
+    int ticks = 0;
+    CHECK(wait_until([&] {
+        if (ticks++ % 25 == 0) rig2.server->meters({{"E1", 123}});  // every ~50 ms
+        std::lock_guard<std::mutex> lk(l.mu);
+        return l.levels.count(slot) && l.levels[slot] == 123;
+    }, 2000));
 }
 
 TEST(adv_metering_stops_when_last_subscriber_leaves_abruptly) {

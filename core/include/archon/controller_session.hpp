@@ -73,6 +73,9 @@ public:
 
     // Application messages (encrypted). Empty if not Ready.
     Bytes app(const Bytes& plain_message);
+    // Decodes one plaintext application message from an agent into events (the
+    // agent's local window uses it). False if malformed.
+    static bool decode_app(const Bytes& msg, std::vector<ControllerEvent>& events);
 
     State state() const { return state_; }
     const Id16& agent_id() const { return agent_id_; }
