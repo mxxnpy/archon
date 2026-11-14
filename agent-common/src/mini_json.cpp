@@ -185,14 +185,24 @@ private:
                     case 'u': {
                         uint32_t cp = 0;
                         if (!hex4(cp)) return false;
-                        if (cp >= 0xD800 && cp <= 0xDBFF) {  // surrogate pair
+                        // Half of a surrogate pair on its own (JSON.stringify writes one
+                        // when a title is cut inside an emoji) becomes U+FFFD, like
+                        // browsers do, instead of failing the whole message.
+                        if (cp >= 0xD800 && cp <= 0xDBFF) {
+                            const size_t back = i_;
                             uint32_t lo = 0;
-                            if (i_ + 2 > s_.size() || s_[i_] != '\\' || s_[i_ + 1] != 'u') return false;
-                            i_ += 2;
-                            if (!hex4(lo) || lo < 0xDC00 || lo > 0xDFFF) return false;
-                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            if (i_ + 6 <= s_.size() && s_[i_] == '\\' && s_[i_ + 1] == 'u') {
+                                i_ += 2;
+                                if (!hex4(lo)) return false;
+                            }
+                            if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            } else {
+                                i_ = back;  // whatever follows is read on its own
+                                cp = 0xFFFD;
+                            }
                         } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
-                            return false;  // lone low surrogate
+                            cp = 0xFFFD;
                         }
                         utf8(out, cp);
                         break;

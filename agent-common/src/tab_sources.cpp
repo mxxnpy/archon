@@ -12,14 +12,63 @@ namespace {
 
 constexpr size_t kMaxIconB64 = (arc::kMaxIconBytes + 2) / 3 * 4;
 
-// Cuts at `max` bytes without splitting a UTF-8 sequence, and drops control
-// characters (titles come from web pages).
+void put_utf8(std::string& out, uint32_t cp) {
+    if (cp < 0x80) {
+        out += char(cp);
+    } else if (cp < 0x800) {
+        out += char(0xC0 | (cp >> 6));
+        out += char(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += char(0xE0 | (cp >> 12));
+        out += char(0x80 | ((cp >> 6) & 0x3F));
+        out += char(0x80 | (cp & 0x3F));
+    } else {
+        out += char(0xF0 | (cp >> 18));
+        out += char(0x80 | ((cp >> 12) & 0x3F));
+        out += char(0x80 | ((cp >> 6) & 0x3F));
+        out += char(0x80 | (cp & 0x3F));
+    }
+}
+
+// Next code point of UTF-8 text; invalid bytes give U+FFFD (one byte consumed).
+uint32_t next_cp(const std::string& s, size_t& i) {
+    const unsigned char c = static_cast<unsigned char>(s[i]);
+    const int len = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 0;
+    if (len == 0 || i + size_t(len) > s.size()) {
+        ++i;
+        return 0xFFFD;
+    }
+    uint32_t cp = len == 1 ? c : len == 2 ? (c & 0x1F) : len == 3 ? (c & 0x0F) : (c & 0x07);
+    for (int k = 1; k < len; ++k) {
+        const unsigned char cc = static_cast<unsigned char>(s[i + size_t(k)]);
+        if ((cc & 0xC0) != 0x80) {
+            ++i;
+            return 0xFFFD;
+        }
+        cp = (cp << 6) | (cc & 0x3F);
+    }
+    static const uint32_t min_for[5] = {0, 0, 0x80, 0x800, 0x10000};
+    i += size_t(len);
+    if (cp < min_for[len] || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return 0xFFFD;  // overlong / invalid
+    return cp;
+}
+
+// Text from web pages, made safe to show: valid UTF-8, control characters
+// (C0, DEL, C1) as spaces, no direction overrides that could make a title read
+// backwards, cut at `max` bytes without splitting a character.
 std::string clean_text(const std::string& s, size_t max) {
     std::string out;
     out.reserve(std::min(s.size(), max));
-    for (const char ch : s) {
-        const unsigned char c = static_cast<unsigned char>(ch);
-        out += (c < 0x20 || c == 0x7F) ? ' ' : ch;
+    for (size_t i = 0; i < s.size() && out.size() <= max;) {
+        const uint32_t cp = next_cp(s, i);
+        if (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F)) {
+            out += ' ';
+        } else if (cp == 0x200E || cp == 0x200F || cp == 0x061C || (cp >= 0x202A && cp <= 0x202E) ||
+                   (cp >= 0x2066 && cp <= 0x2069)) {
+            continue;  // bidi controls: dropped
+        } else {
+            put_utf8(out, cp);
+        }
     }
     if (out.size() > max) {
         size_t cut = max;
@@ -179,8 +228,10 @@ void TabSources::message(uint64_t conn, const std::string& text) {
     auto lit = links_.find(conn);
     if (lit == links_.end()) return;
     Link& l = lit->second;
+    const bool first = l.messages++ == 0;
 
-    if (kind == "host") {  // added by the native host: which browser executable this is
+    if (kind == "host") {  // added by the native host, always first: which browser executable this is
+        if (!first) return;  // the extension cannot claim to be another browser later
         l.exe = clean_text(msg["exe"].string_or(), 1024);
         refresh_link(conn, l);
         return;

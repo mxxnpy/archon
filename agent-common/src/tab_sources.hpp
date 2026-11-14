@@ -78,6 +78,7 @@ private:
         TabLink* link = nullptr;
         std::string browser;  // "brave", "chrome", ...
         std::string exe;      // browser executable (from the native host)
+        size_t messages = 0;  // received so far ("host" is only taken as the first)
         std::map<int64_t, Tab> tabs;
     };
     struct AppSource {  // a platform source, to place tabs on their browser's output

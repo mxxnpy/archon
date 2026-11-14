@@ -121,7 +121,7 @@ TEST(json_parses_objects_arrays_escapes_and_rejects_garbage) {
     CHECK(v["a"].arr.size() == 2);
     CHECK(v["a"].arr[1].str == "x\xC3\xA9\xF0\x9F\x98\x80\n");
     CHECK(v["missing"]["deeper"].string_or("d") == "d");
-    for (const char* bad : {"", "{", "{\"a\":1,}", "[1 2]", "{\"a\":1} x", "\"\\x\"", "\"\\ud800\"", "\"a\nb\"",
+    for (const char* bad : {"", "{", "{\"a\":1,}", "[1 2]", "{\"a\":1} x", "\"\\x\"", "\"\\uZZZZ\"", "\"a\nb\"",
                             "01", "1.", "-", "tru", "{\"a\" 1}", "[[[[[[[[[[[1]]]]]]]]]]]"})
         CHECK(!json::parse(bad, v));
     json::Limits lim;
@@ -277,4 +277,39 @@ TEST(source_wire_carries_tab_fields_and_old_agents_still_decode) {
     arc::SourceInfo d2;
     REQUIRE(arc::decode_source(r2, d2));
     CHECK(d2.route == "OUT2" && !d2.tab && d2.group.empty() && d2.detail.empty());
+}
+
+// Review 1.4 (SEC-4): a title cut inside an emoji must not wipe the whole list.
+TEST(tabs_survive_a_half_emoji_in_a_title) {
+    json::Value v;
+    REQUIRE(json::parse("\"ok \\ud83d\"", v));  // what JSON.stringify writes for a cut emoji
+    CHECK(v.str == "ok \xEF\xBF\xBD");         // U+FFFD
+    REQUIRE(json::parse("\"\\ude00x\"", v));
+    CHECK(v.str == "\xEF\xBF\xBDx");
+    REQUIRE(json::parse("\"\\ud83d\\u0041\"", v));  // high half followed by a normal escape
+    CHECK(v.str == "\xEF\xBF\xBD" "A");
+    Rig r;
+    r.tabs.message(r.conn, "{\"t\":\"tabs\",\"tabs\":[{\"id\":1,\"title\":\"m\\ud83d\"},{\"id\":2,\"title\":\"ok\"}]}");
+    CHECK(r.tabs.tab_count() == 2);
+}
+
+// SEC-11: titles cannot reorder themselves on screen or carry C1 controls.
+TEST(tab_titles_drop_direction_overrides_and_c1_controls) {
+    Rig r;
+    r.tabs.message(r.conn, tabs_msg(tab_json(1, "pay\xE2\x80\xAEgnp.exe") + "," + tab_json(2, "a\xC2\x85" "b") + "," +
+                                    tab_json(3, std::string("bad\xFF", 4) + "!")));
+    CHECK(r.sink.sources["tab:1:1"].name == "paygnp.exe");  // U+202E removed
+    CHECK(r.sink.sources["tab:1:2"].name == "a b");          // U+0085 -> space
+    CHECK(r.sink.sources["tab:1:3"].name == "bad\xEF\xBF\xBD!");  // invalid byte -> U+FFFD
+}
+
+// SEC-7: only the native host's first frame says which browser this is.
+TEST(the_browser_cannot_claim_another_executable_later) {
+    Rig r;
+    r.browser_session("OUT2");
+    r.tabs.message(r.conn, R"({"t":"host","exe":"C:\\Other\\other.exe"})");
+    r.tabs.message(r.conn, R"({"t":"host","exe":"C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"})");
+    r.tabs.message(r.conn, tabs_msg(tab_json(7, "x")));
+    CHECK(r.sink.sources["tab:1:7"].group != "Brave");  // the second "host" was ignored
+    CHECK(r.sink.sources["tab:1:7"].endpoint_id == "OUT1");
 }

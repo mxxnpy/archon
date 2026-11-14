@@ -14,7 +14,7 @@
 set_target_properties(archon_agent PROPERTIES OUTPUT_NAME "Archon")
 target_link_libraries(archon_agent PRIVATE
   archon_core archon_agent_common ole32 oleaut32 uuid crypt32 dnsapi iphlpapi shell32 shlwapi
-  comctl32 windowscodecs advapi32 user32 gdi32 version propsys gdiplus dwmapi secur32 runtimeobject)
+  comctl32 windowscodecs advapi32 user32 gdi32 version propsys gdiplus dwmapi secur32 runtimeobject bcrypt)
 target_compile_definitions(archon_agent PRIVATE UNICODE _UNICODE)
 if(MSVC)
   target_compile_options(archon_agent PRIVATE /W4 /permissive- /utf-8)
@@ -26,7 +26,7 @@ endif()
 add_executable(archon_tabs_host src/tabs_host_main.cpp src/win_proc.cpp ../agent-common/src/mini_json.cpp)
 set_target_properties(archon_tabs_host PROPERTIES OUTPUT_NAME "archon-tabs-host")
 target_include_directories(archon_tabs_host PRIVATE ../agent-common/src)
-target_link_libraries(archon_tabs_host PRIVATE advapi32)
+target_link_libraries(archon_tabs_host PRIVATE advapi32 bcrypt)
 target_compile_definitions(archon_tabs_host PRIVATE UNICODE _UNICODE)
 if(MSVC)
   target_compile_options(archon_tabs_host PRIVATE /W4 /permissive- /utf-8)
@@ -39,7 +39,7 @@ add_executable(archon_tabs_e2e tests/tabs_e2e.cpp src/tab_pipe.cpp src/win_proc.
 set_target_properties(archon_tabs_e2e PROPERTIES OUTPUT_NAME "Archon"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tabs-e2e")
 target_link_libraries(archon_tabs_e2e PRIVATE archon_core archon_agent_common ole32 oleaut32 uuid crypt32 iphlpapi
-  shell32 shlwapi windowscodecs advapi32 user32 gdi32 version propsys secur32)
+  shell32 shlwapi windowscodecs advapi32 user32 gdi32 version propsys secur32 bcrypt)
 target_include_directories(archon_tabs_e2e PRIVATE src)
 target_compile_definitions(archon_tabs_e2e PRIVATE UNICODE _UNICODE)
 add_dependencies(archon_tabs_e2e archon_tabs_host)

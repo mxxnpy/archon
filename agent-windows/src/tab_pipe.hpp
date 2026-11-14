@@ -29,9 +29,13 @@ private:
     void accept_loop();
     void serve(Conn* c);
 
+    HANDLE create_instance(bool first);
+
     TabSources& tabs_;
     std::wstring name_;
     std::wstring host_path_;
+    PSECURITY_DESCRIPTOR sd_ = nullptr;
+    HANDLE first_ = INVALID_HANDLE_VALUE;  // created in start(), before the name is published
     HANDLE stop_evt_ = nullptr;
     std::thread acceptor_;
     std::mutex mu_;

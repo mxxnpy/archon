@@ -59,7 +59,9 @@ bool pipe_write_all(HANDLE pipe, const void* data, DWORD n) {
 }
 
 HANDLE open_agent_pipe() {
-    const std::wstring name = tab_pipe_name();
+    // The running agent publishes its (random) pipe name in HKCU.
+    const std::wstring name = published_tab_pipe_name();
+    if (name.empty()) return INVALID_HANDLE_VALUE;
     for (int attempt = 0; attempt < 20; ++attempt) {
         HANDLE h = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
                                FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
@@ -79,10 +81,11 @@ int wmain() {
 
     HANDLE pipe = open_agent_pipe();
     if (pipe == INVALID_HANDLE_VALUE) return 1;
-    // Only the Archon agent next to this host may receive the browser's tabs.
+    // Only the Archon agent next to this host, run by this same user at normal
+    // integrity, on a pipe this user owns, may receive the browser's tabs.
     ULONG server = 0;
-    if (!GetNamedPipeServerProcessId(pipe, &server) ||
-        !same_path(process_image(server), dir_of(module_path()) + L"\\Archon.exe")) {
+    if (!GetNamedPipeServerProcessId(pipe, &server) || !pipe_owned_by_me(pipe) ||
+        !same_file(process_image(server), dir_of(module_path()) + L"\\Archon.exe") || !process_is_peer(server)) {
         CloseHandle(pipe);
         return 3;
     }

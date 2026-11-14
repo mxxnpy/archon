@@ -77,6 +77,34 @@
     threw = true;
   }
   check(!threw, "disconnect(destination) and disconnect() keep working");
+
+  // Review 1.4: an element routed into Web Audio is scaled once (by the master), not twice.
+  const routedEl = document.createElement("audio");
+  routedEl.volume = 0.8;
+  ctx.createMediaElementSource(routedEl);
+  check(near(played(routedEl), 0.8) && near(routedEl.volume, 0.8), "routed element keeps the site's volume (master scales it)");
+  routedEl.volume = 0.5;
+  check(near(played(routedEl), 0.5), "routed element: site changes stay unscaled");
+  // Offline rendering (exporting a file) is never scaled.
+  const off = new OfflineAudioContext(1, 128, 48000);
+  const before = window.__toDestination.length;
+  off.createOscillator().connect(off.destination);
+  const last = window.__toDestination[window.__toDestination.length - 1];
+  check(window.__toDestination.length === before + 1 && last instanceof OscillatorNode,
+    "offline rendering connects straight to its destination");
+  // Bad gain values from the page are ignored; the hooks keep working.
+  gain(NaN);
+  await tick();
+  let ok = true;
+  try {
+    a.volume = 0.5;
+    a.play().catch(() => {});
+  } catch (e) {
+    ok = false;
+  }
+  check(ok && near(played(a), 0.5 * 0.4), "NaN gain is ignored");
+  // Nothing added to the page's globals.
+  check(!Object.keys(window).some((k) => /archon/i.test(k)), "no global left on the page");
   gain(1);
   await tick();
 

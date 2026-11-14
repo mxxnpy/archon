@@ -10,6 +10,7 @@
 // Skips (exit 0) when a real Archon agent already owns the pipe.
 
 #include <windows.h>
+#include <sddl.h>
 
 #include <atomic>
 #include <chrono>
@@ -158,34 +159,87 @@ struct Host {
     }
 };
 
+
+// A low-integrity token (what a browser sandbox or a downloaded "protected" app runs with).
+HANDLE low_integrity_token() {
+    HANDLE t = nullptr, d = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_ADJUST_DEFAULT | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY, &t))
+        return nullptr;
+    DuplicateTokenEx(t, 0, nullptr, SecurityImpersonation, TokenPrimary, &d);
+    CloseHandle(t);
+    PSID sid = nullptr;
+    ConvertStringSidToSidW(L"S-1-16-4096", &sid);
+    TOKEN_MANDATORY_LABEL tml{};
+    tml.Label.Attributes = SE_GROUP_INTEGRITY;
+    tml.Label.Sid = sid;
+    SetTokenInformation(d, TokenIntegrityLevel, &tml, DWORD(sizeof tml + GetLengthSid(sid)));
+    LocalFree(sid);
+    return d;
+}
+
+// Runs this program again at low integrity with `args`; returns its exit code.
+DWORD run_low(const std::wstring& args, DWORD wait_ms = 5000, PROCESS_INFORMATION* keep = nullptr) {
+    HANDLE tok = low_integrity_token();
+    if (!tok) return 997;
+    std::wstring cmd = L"\"" + module_path() + L"\" " + args;
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessAsUserW(tok, module_path().c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                                         nullptr, nullptr, &si, &pi);
+    CloseHandle(tok);
+    if (!ok) return 996;
+    if (keep) {
+        *keep = pi;
+        return 0;
+    }
+    DWORD code = 995;
+    if (WaitForSingleObject(pi.hProcess, wait_ms) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+    else TerminateProcess(pi.hProcess, 994);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return code;
+}
+
+// Child modes (run at low integrity by the checks below).
+int child(const std::wstring& mode, const std::wstring& arg) {
+    if (mode == L"--low-publish") return publish_tab_pipe_name(arg) ? 1 : 0;  // 0 = refused, as it must be
+    if (mode == L"--low-squat") {
+        // Plays a fake agent on `arg` for a few seconds.
+        PSECURITY_DESCRIPTOR sd = nullptr;
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(current_user_only_sddl().c_str(), SDDL_REVISION_1, &sd, nullptr);
+        SECURITY_ATTRIBUTES sa{sizeof sa, sd, FALSE};
+        HANDLE p = CreateNamedPipeW(arg.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                                    PIPE_TYPE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536, 65536, 0, &sa);
+        if (p == INVALID_HANDLE_VALUE) return 2;
+        ConnectNamedPipe(p, nullptr);
+        char b[64];
+        DWORD r = 0;
+        const bool got = ReadFile(p, b, sizeof b, &r, nullptr) && r > 0;  // did the host talk to us?
+        CloseHandle(p);
+        return got ? 1 : 0;
+    }
+    return 9;
+}
+
 }  // namespace
 
-int wmain() {
+int wmain(int argc, wchar_t** argv) {
+    if (argc >= 3) return child(argv[1], argv[2]);
     Inner inner;
     Sink sink;
     TabSources tabs(inner, [](uint32_t pid) { return to_utf8(process_image(pid)); });
     std::string err;
     tabs.start(sink, &err);
+    const std::wstring before = published_tab_pipe_name();  // a running agent's, put back at the end
     TabPipeServer server(tabs);
     if (!server.start(&err)) {
         std::printf("FAIL pipe server: %s\n", err.c_str());
         return 1;
     }
+    const std::wstring ours = published_tab_pipe_name();
+    check(!ours.empty() && ours != before, "pipe name is fresh and published");
     std::this_thread::sleep_for(150ms);
-    {
-        // Is the pipe ours? A running Archon agent would own the name.
-        ULONG owner = 0;
-        HANDLE probe = CreateFileW(tab_pipe_name().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-        if (probe != INVALID_HANDLE_VALUE) {
-            GetNamedPipeServerProcessId(probe, &owner);
-            CloseHandle(probe);
-        }
-        if (owner != GetCurrentProcessId()) {
-            std::printf("SKIP an Archon agent is running and owns the tabs pipe\n");
-            server.stop();
-            return 0;
-        }
-    }
     const std::wstring here = dir_of(module_path());
     const std::wstring host_exe = here + L"\\" + kTabsHostExe;
 
@@ -214,7 +268,7 @@ int wmain() {
 
     // 2. Any other program (here: this one) opening the pipe is refused by the agent.
     {
-        HANDLE p = CreateFileW(tab_pipe_name().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        HANDLE p = CreateFileW(published_tab_pipe_name().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
         bool refused = p == INVALID_HANDLE_VALUE;
         if (!refused) {
             const std::string j = R"({"t":"tabs","tabs":[{"id":5,"title":"x"}]})";
@@ -244,7 +298,34 @@ int wmain() {
     DeleteFileW(stray.c_str());
     RemoveDirectoryW(other_dir.c_str());
 
+    // 4. Review 1.4 (SEC-1): a low-integrity process cannot take the agent's place.
+    check(run_low(L"--low-publish \\\\.\\pipe\\archon-tabs-evil") == 0,
+          "a low-integrity process cannot change the published pipe name");
+    check(published_tab_pipe_name() == ours, "published name unchanged");
+    check(run_low(L"--low-squat " + ours) == 2, "a low-integrity process cannot create the agent's pipe name");
+    {
+        // Even if a low-integrity fake agent got its pipe name published, the host refuses it.
+        const std::wstring fake = new_tab_pipe_name();
+        PROCESS_INFORMATION squat{};
+        check(run_low(L"--low-squat " + fake, 0, &squat) == 0, "low-integrity fake agent started");
+        std::this_thread::sleep_for(300ms);
+        publish_tab_pipe_name(fake);  // (only possible from normal integrity: simulates the worst case)
+        Host h4;
+        check(h4.start(host_exe), "host started against the fake agent");
+        const DWORD host_code = h4.finish();
+        DWORD squat_code = 999;
+        if (WaitForSingleObject(squat.hProcess, 3000) == WAIT_OBJECT_0) GetExitCodeProcess(squat.hProcess, &squat_code);
+        else TerminateProcess(squat.hProcess, 998);
+        CloseHandle(squat.hProcess);
+        CloseHandle(squat.hThread);
+        check(host_code == 3, "host refuses a low-integrity pipe server");
+        check(squat_code != 1, "the fake agent received nothing from the host");
+        publish_tab_pipe_name(ours);
+    }
+
     server.stop();
+    check(published_tab_pipe_name().empty(), "stopping unpublishes the pipe name");
+    if (!before.empty()) publish_tab_pipe_name(before);  // a running agent keeps working
     tabs.stop();
     std::printf(failures ? "\n%d FAILED\n" : "\nALL PASSED\n", failures);
     return failures ? 1 : 0;

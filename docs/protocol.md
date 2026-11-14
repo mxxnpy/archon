@@ -340,8 +340,20 @@ extension, or nothing playing).
 
 On the PC, the extension talks to a native-messaging host
 (`archon-tabs-host.exe` beside `Archon.exe` on Windows) that relays to the
-agent over a pipe only the same user can open; the agent accepts only that
-host, and the host talks only to the agent beside it.
+agent over a local pipe:
+
+* The pipe name is random for each run of the agent, created before it is
+  published in `HKCU\Software\Archon` (which other accounts and
+  low-integrity processes cannot write), and only this user may open it.
+* The agent accepts only the host file beside `Archon.exe`, run by the same
+  user at normal integrity or above. The host talks only to a pipe owned by
+  this user, served by the `Archon.exe` beside it at normal integrity or above.
+* Only the host's first frame names the browser executable.
+* Not covered: a program already running as the same user at normal integrity
+  can start the host itself and report made-up tabs. Such a program can
+  already change the PC's audio directly, so this gives it nothing new.
+* Private (incognito) tabs are never reported. Titles are cleaned: valid
+  UTF-8, no control or text-direction characters.
 
 ### Profiles (added in 1.5, backward compatible)
 

@@ -30,7 +30,7 @@ const base = {
   version: pkg.version,
   description: "Control the volume of each browser tab from your phone, with the Archon app.",
   icons,
-  permissions: ["nativeMessaging", "tabs"],
+  permissions: ["nativeMessaging", "tabs", "storage"],
   host_permissions: ["<all_urls>"],
   content_scripts: contentScripts,
   action: { default_title: "Archon", default_icon: icons },

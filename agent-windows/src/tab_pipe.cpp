@@ -40,44 +40,67 @@ struct TabPipeServer::Conn final : TabLink {
 TabPipeServer::TabPipeServer(TabSources& tabs) : tabs_(tabs) {}
 TabPipeServer::~TabPipeServer() { stop(); }
 
+HANDLE TabPipeServer::create_instance(bool first) {
+    SECURITY_ATTRIBUTES sa{sizeof sa, sd_, FALSE};
+    return CreateNamedPipeW(name_.c_str(),
+                            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0),
+                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                            PIPE_UNLIMITED_INSTANCES, 64 * 1024, 64 * 1024, 0, &sa);
+}
+
 bool TabPipeServer::start(std::string* err) {
-    name_ = tab_pipe_name();
+    // A fresh unguessable name each run, created (as the first instance) before
+    // it is published: nobody can take it first. The host reads the name from
+    // HKCU, which low-integrity processes and other accounts cannot write.
+    name_ = new_tab_pipe_name();
     host_path_ = dir_of(module_path()) + L"\\" + kTabsHostExe;
-    stop_evt_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (name_.size() < 25 || !stop_evt_) {
-        if (err) *err = "no user id for the tabs pipe";
+    if (name_.empty() || !ConvertStringSecurityDescriptorToSecurityDescriptorW(current_user_only_sddl().c_str(),
+                                                                               SDDL_REVISION_1, &sd_, nullptr)) {
+        if (err) *err = "no user identity for the tabs pipe";
         return false;
     }
+    first_ = create_instance(true);
+    if (first_ == INVALID_HANDLE_VALUE) {
+        if (err) *err = "cannot create the tabs pipe (" + std::to_string(GetLastError()) + ")";
+        return false;
+    }
+    if (!publish_tab_pipe_name(name_)) {
+        CloseHandle(first_);
+        first_ = INVALID_HANDLE_VALUE;
+        if (err) *err = "cannot publish the tabs pipe name";
+        return false;
+    }
+    stop_evt_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     acceptor_ = std::thread([this] { accept_loop(); });
     return true;
 }
 
 void TabPipeServer::stop() {
-    if (!stop_evt_) return;
-    SetEvent(stop_evt_);
-    if (acceptor_.joinable()) acceptor_.join();
-    std::list<std::unique_ptr<Conn>> all;
-    {
-        std::lock_guard<std::mutex> lk(mu_);
-        all.swap(conns_);
+    if (stop_evt_) {
+        SetEvent(stop_evt_);
+        if (acceptor_.joinable()) acceptor_.join();
+        std::list<std::unique_ptr<Conn>> all;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            all.swap(conns_);
+        }
+        for (auto& c : all)
+            if (c->thread.joinable()) c->thread.join();
+        CloseHandle(stop_evt_);
+        stop_evt_ = nullptr;
     }
-    for (auto& c : all)
-        if (c->thread.joinable()) c->thread.join();
-    CloseHandle(stop_evt_);
-    stop_evt_ = nullptr;
+    if (first_ != INVALID_HANDLE_VALUE) CloseHandle(first_);
+    first_ = INVALID_HANDLE_VALUE;
+    if (!name_.empty()) unpublish_tab_pipe_name(name_);
+    if (sd_) LocalFree(sd_);
+    sd_ = nullptr;
 }
 
 void TabPipeServer::accept_loop() {
-    PSECURITY_DESCRIPTOR sd = nullptr;
-    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(current_user_only_sddl().c_str(), SDDL_REVISION_1, &sd,
-                                                              nullptr)) {
-        log_line("browser tabs: cannot build the pipe's security descriptor");
-        return;
-    }
-    SECURITY_ATTRIBUTES sa{sizeof sa, sd, FALSE};
     HANDLE evt = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    bool first = true;
-    while (WaitForSingleObject(stop_evt_, 0) == WAIT_TIMEOUT) {
+    HANDLE p = first_;  // the listening instance
+    first_ = INVALID_HANDLE_VALUE;
+    while (p != INVALID_HANDLE_VALUE && WaitForSingleObject(stop_evt_, 0) == WAIT_TIMEOUT) {
         // Reap finished connections.
         {
             std::lock_guard<std::mutex> lk(mu_);
@@ -90,16 +113,6 @@ void TabPipeServer::accept_loop() {
                 }
             }
         }
-        HANDLE p = CreateNamedPipeW(name_.c_str(),
-                                    PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0),
-                                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                                    PIPE_UNLIMITED_INSTANCES, 64 * 1024, 64 * 1024, 0, &sa);
-        if (p == INVALID_HANDLE_VALUE) {
-            // Someone else already owns the name (another agent?): give up rather than share it.
-            log_line("browser tabs: pipe unavailable (" + std::to_string(GetLastError()) + ")");
-            break;
-        }
-        first = false;
         OVERLAPPED ov{};
         ResetEvent(evt);
         ov.hEvent = evt;
@@ -111,34 +124,40 @@ void TabPipeServer::accept_loop() {
                 CancelIoEx(p, &ov);
                 DWORD ignored = 0;
                 GetOverlappedResult(p, &ov, &ignored, TRUE);
-                CloseHandle(p);
                 break;
             }
             DWORD ignored = 0;
             e = GetOverlappedResult(p, &ov, &ignored, FALSE) ? ERROR_PIPE_CONNECTED : GetLastError();
         }
-        if (e != ERROR_PIPE_CONNECTED) {
+        // Keep one instance listening at all times: make the next one before
+        // dealing with this connection.
+        HANDLE next = create_instance(false);
+        if (next == INVALID_HANDLE_VALUE) log_line("browser tabs: cannot open another pipe instance");
+        if (e == ERROR_PIPE_CONNECTED) {
+            // Only our own host (the file next to Archon.exe), run by this user at
+            // normal integrity (not a sandboxed or other-account process).
+            ULONG client = 0;
+            if (!GetNamedPipeClientProcessId(p, &client) || !same_file(process_image(client), host_path_) ||
+                !process_is_peer(client)) {
+                log_line("browser tabs: refused a connection from another program");
+                DisconnectNamedPipe(p);
+                CloseHandle(p);
+            } else {
+                auto c = std::make_unique<Conn>();
+                c->pipe = p;
+                c->wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+                Conn* raw = c.get();
+                std::lock_guard<std::mutex> lk(mu_);
+                conns_.push_back(std::move(c));
+                raw->thread = std::thread([this, raw] { serve(raw); });
+            }
+        } else {
             CloseHandle(p);
-            continue;
         }
-        // Only our own host (next to Archon.exe) may connect.
-        ULONG client = 0;
-        if (!GetNamedPipeClientProcessId(p, &client) || !same_path(process_image(client), host_path_)) {
-            log_line("browser tabs: refused a connection from another program");
-            DisconnectNamedPipe(p);
-            CloseHandle(p);
-            continue;
-        }
-        auto c = std::make_unique<Conn>();
-        c->pipe = p;
-        c->wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        Conn* raw = c.get();
-        std::lock_guard<std::mutex> lk(mu_);
-        conns_.push_back(std::move(c));
-        raw->thread = std::thread([this, raw] { serve(raw); });
+        p = next;
     }
+    if (p != INVALID_HANDLE_VALUE) CloseHandle(p);
     CloseHandle(evt);
-    LocalFree(sd);
 }
 
 void TabPipeServer::serve(Conn* c) {
