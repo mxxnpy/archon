@@ -347,7 +347,7 @@ agent over a local pipe:
   low-integrity processes cannot write), and only this user may open it.
 * The agent accepts only the host file beside `Archon.exe`, run by the same
   user at normal integrity or above. The host talks only to a pipe owned by
-  this user, served by the `Archon.exe` beside it at normal integrity or above.
+  this account (the user, or Administrators for an elevated administrator), served by the `Archon.exe` beside it at normal integrity or above.
 * Only the host's first frame names the browser executable.
 * Not covered: a program already running as the same user at normal integrity
   can start the host itself and report made-up tabs. Such a program can

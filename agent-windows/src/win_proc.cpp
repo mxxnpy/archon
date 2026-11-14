@@ -151,12 +151,22 @@ bool pipe_owned_by_me(HANDLE pipe) {
     std::vector<uint8_t> me;
     DWORD il = 0;
     if (!my_identity(me, il)) return false;
+    // Objects get the creator's default owner: the user, or BUILTIN\Administrators
+    // for an elevated administrator. Accept both of this account's owners.
+    std::vector<uint8_t> default_owner;
+    HANDLE tok = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
+        default_owner = token_info(tok, TokenOwner);
+        CloseHandle(tok);
+    }
     PSID owner = nullptr;
     PSECURITY_DESCRIPTOR sd = nullptr;
     if (GetSecurityInfo(pipe, SE_KERNEL_OBJECT, OWNER_SECURITY_INFORMATION, &owner, nullptr, nullptr, nullptr, &sd) !=
         ERROR_SUCCESS)
         return false;
-    const bool mine = owner && EqualSid(owner, token_user_sid(me));
+    const bool mine = owner && (EqualSid(owner, token_user_sid(me)) ||
+                                (!default_owner.empty() &&
+                                 EqualSid(owner, reinterpret_cast<TOKEN_OWNER*>(default_owner.data())->Owner)));
     LocalFree(sd);
     return mine;
 }
