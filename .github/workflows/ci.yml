@@ -91,7 +91,21 @@ jobs:
         run: >
           xcodebuild -project Archon.xcodeproj -scheme Archon -configuration Release
           -sdk iphoneos -destination "generic/platform=iOS"
-          CODE_SIGNING_ALLOWED=NO build
+          -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO build
+      - name: Package unsigned .ipa (sign it with your own Apple ID, e.g. Sideloadly)
+        working-directory: apps/ios
+        run: |
+          set -euo pipefail
+          APP=build/device/Build/Products/Release-iphoneos/Archon.app
+          test -x "$APP/Archon"
+          rm -rf ipa && mkdir -p ipa/Payload
+          cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry ../Archon-unsigned.ipa Payload)
+          ls -l Archon-unsigned.ipa
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: archon-ios-ipa-unsigned
+          path: apps/ios/Archon-unsigned.ipa
       - name: Screenshots (iPhone 16 Plus simulator, same size as iPhone 14 Plus)
         working-directory: apps/ios
         run: |
