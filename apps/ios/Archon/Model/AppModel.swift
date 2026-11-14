@@ -69,7 +69,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var levels: [Int: Double] = [:]
     @Published var selectedEndpoint: String?
     @Published var pairingRemovedNotice = false
-    @Published private(set) var paired: [PairedPC] = []
+    @Published private(set) var paired: [PairedPC] = [] {
+        didSet { discovery.pinned = Set(paired.map(\.agentId)) }
+    }
 
     let discovery = Discovery()
     private let store = PairingStore()
@@ -83,6 +85,7 @@ final class AppModel: ObservableObject {
 
     init() {
         paired = store.all()
+        discovery.pinned = Set(paired.map(\.agentId))  // didSet doesn't run inside init
         client = CoreClient(controllerId: store.controllerId, name: UIDevice.current.name) { [weak self] ev in
             Task { @MainActor in self?.apply(ev) }
         }
@@ -141,7 +144,9 @@ final class AppModel: ObservableObject {
         // authenticated resume succeeds (anyone can advertise a PC's public id).
         var rows = paired.map { p -> PCRow in
             let live = found[p.agentId]
-            return PCRow(target: Target(agentId: p.agentId, name: live?.name ?? p.name, host: live?.host ?? p.host,
+            // The name comes from the authenticated pairing record, never from mDNS
+            // (a spoofed announcement must not relabel a paired PC).
+            return PCRow(target: Target(agentId: p.agentId, name: p.name, host: live?.host ?? p.host,
                                         port: live?.port ?? p.port), paired: true, online: live != nil)
         }.sorted { $0.online && !$1.online }
         let others = found.values.filter { f in !paired.contains { $0.agentId == f.agentId } }

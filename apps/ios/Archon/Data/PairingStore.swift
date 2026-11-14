@@ -20,22 +20,32 @@ final class PairingStore {
     /// Kept in the Keychain (this device only) so backups restored on another
     /// phone don't carry this phone's identity.
     lazy var controllerId: Data = {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                kSecAttrService as String: "dev.archon.identity",
-                                kSecAttrAccount as String: "controllerId",
-                                kSecReturnData as String: true]
+        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                   kSecAttrService as String: "dev.archon.identity",
+                                   kSecAttrAccount as String: "controllerId"]
         var out: CFTypeRef?
-        if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data, d.count == 16 { return d }
-        let id = (defaults.data(forKey: "controllerId")).flatMap { $0.count == 16 ? $0 : nil } ?? CoreClient.generateId()
-        let add: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                  kSecAttrService as String: "dev.archon.identity",
-                                  kSecAttrAccount as String: "controllerId",
-                                  kSecValueData as String: id,
-                                  kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
-        SecItemAdd(add as CFDictionary, nil)
-        defaults.removeObject(forKey: "controllerId")
+        let st = SecItemCopyMatching(base.merging([kSecReturnData as String: true]) { $1 } as CFDictionary, &out)
+        if st == errSecSuccess, let d = out as? Data, d.count == 16 { return d }
+        let legacy = defaults.data(forKey: "controllerId").flatMap { $0.count == 16 ? $0 : nil }
+        // Keychain unavailable (e.g. locked before first unlock): use an id for
+        // this run only and don't touch storage, so the real identity isn't replaced.
+        guard st == errSecItemNotFound else { return legacy ?? CoreClient.generateId() }
+        // The pre-Keychain id lived in UserDefaults, which backups carry to other
+        // phones. Adopt it only on the phone that made it: pairing keys are
+        // ThisDeviceOnly, so having any proves this is the same device.
+        let id = (legacy != nil && hasPairings()) ? legacy! : CoreClient.generateId()
+        let add = base.merging([kSecValueData as String: id,
+                                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]) { $1 }
+        if SecItemAdd(add as CFDictionary, nil) == errSecSuccess { defaults.removeObject(forKey: "controllerId") }
         return id
     }()
+
+    private func hasPairings() -> Bool {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                kSecAttrService as String: service,
+                                kSecMatchLimit as String: kSecMatchLimitOne]
+        return SecItemCopyMatching(q as CFDictionary, nil) == errSecSuccess
+    }
 
     func all() -> [PairedPC] {
         let q: [String: Any] = [

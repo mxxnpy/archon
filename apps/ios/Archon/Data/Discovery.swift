@@ -17,6 +17,11 @@ final class Discovery: ObservableObject {
     @Published private(set) var found: [String: DiscoveredPC] = [:]
     @Published private(set) var searching = false
     @Published private(set) var permissionDenied = false
+    /// Ids of paired PCs: always admitted, so fake announcements filling the cap
+    /// can't hide a paired PC (e.g. after its address changed).
+    var pinned: Set<String> = []
+    private static let maxFound = 32
+    private static let maxResolving = 8
 
     private var browser: NWBrowser?
     private var resolving: [NWEndpoint: NWConnection] = [:]
@@ -69,6 +74,10 @@ final class Discovery: ObservableObject {
     private func resolve(_ result: NWBrowser.Result) {
         guard case .bonjour(let txt) = result.metadata, let id = txt["id"]?.lowercased(), id.count == 32,
               case .service(let name, _, _, _) = result.endpoint, resolving[result.endpoint] == nil else { return }
+        // Bounded before any connection is opened: mDNS is unauthenticated, anyone can advertise.
+        let isPinned = pinned.contains(id)
+        guard isPinned || ((found[id] != nil || found.count < Self.maxFound) && resolving.count < Self.maxResolving)
+        else { return }
         let params = NWParameters.tcp
         if let ip = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options { ip.version = .v4 }
         let conn = NWConnection(to: result.endpoint, using: params)
@@ -86,8 +95,8 @@ final class Discovery: ObservableObject {
                         case .name(let n, _): h = n
                         @unknown default: h = "\(host)"
                         }
-                        // Bounded and sanitized: mDNS is unauthenticated, anyone can advertise.
-                        guard self.found[id] != nil || self.found.count < 32 else { conn.cancel(); return }
+                        guard self.pinned.contains(id) || self.found[id] != nil || self.found.count < Self.maxFound
+                        else { conn.cancel(); return }
                         let clean = String(name.unicodeScalars.filter {
                             !CharacterSet.controlCharacters.contains($0) && !(0x202A...0x202E).contains($0.value)
                                 && !(0x2066...0x2069).contains($0.value) && $0.value != 0x200E && $0.value != 0x200F

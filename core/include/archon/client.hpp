@@ -99,7 +99,7 @@ private:
     // Connection parameters (owned by the worker while it runs).
     std::vector<std::pair<std::string, uint16_t>> addrs_;
     size_t attempt_ = 0;
-    std::vector<bool> not_recognized_;  // per address: refused (unverified) since the last success
+    std::vector<ErrorCode> refused_;  // per address: unverified refusal since the last success (None = not refused)
     Mode mode_ = Mode::Pair;
     PairingRecord record_;
 

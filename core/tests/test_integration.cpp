@@ -642,6 +642,156 @@ TEST(integration_any_unverified_refusal_moves_to_next_address) {
     net::close_socket(ls);
 }
 
+TEST(integration_all_refused_reports_not_recognized_over_spoofed_reason) {
+    // R-6: when every address refused, a spoofer's chosen refusal ("update the
+    // app") must not hide the real PC's "not recognized" (the actionable one).
+    Rig real;  // knows nothing about this phone -> plaintext "unknown controller"
+    PairingRecord rec;
+    rec.agent_id = random_array<16>();
+    rec.pair_key = random_array<32>();
+    net::init();
+    uint16_t port = 0;
+    std::string err;
+    net::socket_t ls = net::listen_tcp(0, true, &port, &err);
+    REQUIRE(ls != net::kInvalidSocket);
+    std::atomic<bool> go{true};
+    std::thread fake([&] {
+        while (go) {
+            std::vector<net::PollItem> it{{ls, true, false}};
+            if (net::poll(it, 100) <= 0) continue;
+            net::socket_t s = net::accept_tcp(ls, nullptr);
+            if (s == net::kInvalidSocket) continue;
+            const Bytes f = make_frame(encode_error({ErrorCode::UnsupportedVersion, "update"}));
+            net::send_some(s, f.data(), f.size());
+            std::this_thread::sleep_for(50ms);
+            net::close_socket(s);
+        }
+    });
+    Listener l;
+    Client c(random_array<16>(), "phone", l, fast_timing());
+    c.resume({{"127.0.0.1", real.port}, {"127.0.0.1", port}}, rec);  // the spoofer answers last
+    CHECK(wait_for(l.mu, [&] { return l.status == ClientStatus::Failed; }, 8000));
+    {
+        std::lock_guard<std::mutex> lk(l.mu);
+        CHECK(l.failed_with(ErrorCode::NotRecognized));
+    }
+    c.disconnect();
+    go = false;
+    fake.join();
+    net::close_socket(ls);
+}
+
+TEST(integration_injected_framing_garbage_after_ready_reconnects) {
+    // R-2: an on-path attacker injecting a bogus length prefix into a live
+    // channel must only cause a reconnect, never a permanent failure.
+    Rig real;
+    Listener l;
+    const Id16 cid = random_array<16>();
+    Client c(cid, "phone", l, fast_timing());
+    auto rec = pair(real, c, l);
+    REQUIRE(rec.has_value());
+    c.disconnect();
+    net::init();
+    uint16_t port = 0;
+    std::string err;
+    net::socket_t ls = net::listen_tcp(0, true, &port, &err);
+    REQUIRE(ls != net::kInvalidSocket);
+    std::atomic<bool> go{true};
+    std::atomic<int> conns{0};
+    std::thread relay([&] {
+        while (go) {
+            std::vector<net::PollItem> it{{ls, true, false}};
+            if (net::poll(it, 100) <= 0) continue;
+            net::socket_t a = net::accept_tcp(ls, nullptr);
+            if (a == net::kInvalidSocket) continue;
+            std::string e;
+            net::socket_t b = net::connect_tcp("127.0.0.1", real.port, 1000, &e);
+            if (b == net::kInvalidSocket) { net::close_socket(a); continue; }
+            const bool inject = conns.fetch_add(1) == 0;
+            const auto start = std::chrono::steady_clock::now();
+            bool injected = false;
+            while (go) {
+                std::vector<net::PollItem> p{{a, true, false}, {b, true, false}};
+                net::poll(p, 50);
+                uint8_t buf[16384];
+                bool closed = false;
+                for (int i = 0; i < 2 && !closed; ++i) {
+                    if (!p[i].readable && !p[i].failed) continue;
+                    long n = net::recv_some(p[i].fd, buf, sizeof buf);
+                    if (n == net::kWouldBlock) continue;
+                    if (n <= 0) { closed = true; break; }
+                    net::socket_t to = i == 0 ? b : a;
+                    for (long off = 0; off < n;) {
+                        long w = net::send_some(to, buf + off, size_t(n - off));
+                        if (w == net::kWouldBlock) { std::this_thread::sleep_for(1ms); continue; }
+                        if (w <= 0) { closed = true; break; }
+                        off += w;
+                    }
+                }
+                if (closed) break;
+                if (inject && !injected && std::chrono::steady_clock::now() - start > 600ms) {
+                    const uint8_t junk[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+                    net::send_some(a, junk, sizeof junk);
+                    injected = true;
+                }
+            }
+            net::close_socket(a);
+            net::close_socket(b);
+        }
+    });
+    Listener l2;
+    Client c2(cid, "phone", l2, fast_timing());
+    c2.resume({{"127.0.0.1", port}}, *rec);
+    // Connected, broken by the junk, then connected again through a clean link.
+    CHECK(wait_for(l2.mu, [&] { return conns.load() >= 2 && l2.status == ClientStatus::Connected; }, 8000));
+    {
+        std::lock_guard<std::mutex> lk(l2.mu);
+        for (ClientStatus st : l2.history) CHECK(st != ClientStatus::Failed);
+    }
+    c2.disconnect();
+    go = false;
+    relay.join();
+    net::close_socket(ls);
+}
+
+TEST(integration_unlock_lifts_lock_but_keeps_escalation) {
+    // R-1: the tray "unlock" lets the user pair right away, but an attacker
+    // still present must not get the shortest lockout again.
+    struct LockObs : Observer {
+        int lockouts = -1;
+        int64_t until = -1;
+        void on_pairing_lockout(int n, int64_t u) override {
+            std::lock_guard<std::mutex> lk(mu);
+            lockouts = n;
+            until = u;
+        }
+    };
+    FakeBackend fb;
+    MemoryStore store;
+    LockObs obs;
+    ServerConfig cfg = test_cfg();
+    cfg.agent_id = random_array<16>();
+    cfg.loopback_only = true;
+    cfg.port = 0;
+    cfg.initial_lockouts = 3;
+    cfg.locked_until_unix = std::chrono::duration_cast<std::chrono::seconds>(
+                                std::chrono::system_clock::now().time_since_epoch()).count() + 600;
+    Server s(cfg, fb, store, obs);
+    std::string err;
+    REQUIRE(s.start(&err));
+    s.reset_pairing_lockout();
+    CHECK(wait_for(obs.mu, [&] { return obs.until == 0; }));
+    {
+        std::lock_guard<std::mutex> lk(obs.mu);
+        CHECK(obs.lockouts == 3);
+    }
+    Listener l;
+    Client c(random_array<16>(), "phone", l, fast_timing());
+    c.pair("127.0.0.1", s.port());
+    CHECK(wait_for(l.mu, [&] { return l.status == ClientStatus::AwaitingCode; }));
+    c.disconnect();
+}
+
 TEST(lan_only_address_filter) {
     CHECK(net::is_local_network_address("192.168.0.10"));
     CHECK(net::is_local_network_address("10.1.2.3"));

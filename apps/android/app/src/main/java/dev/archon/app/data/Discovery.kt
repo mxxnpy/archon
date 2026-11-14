@@ -33,6 +33,9 @@ class Discovery(context: Context) {
     private var resolving = false
     private val byServiceName = mutableMapOf<String, String>()  // service name -> agent id
 
+    /** Ids of paired PCs: always admitted, so fake announcements filling the cap can't hide them. */
+    @Volatile var pinned: Set<String> = emptySet()
+
     fun start() {
         if (listener != null) return
         val l = object : NsdManager.DiscoveryListener {
@@ -59,6 +62,9 @@ class Discovery(context: Context) {
     }
 
     private fun enqueue(info: NsdServiceInfo) {
+        // Bounded: a flood of announcements must not grow memory without limit.
+        // The TXT id is only known after resolving, so dedupe by service name.
+        if (queue.size >= MAX_QUEUE || queue.any { it.serviceName == info.serviceName }) return
         queue.add(info)
         pump()
     }
@@ -87,14 +93,36 @@ class Discovery(context: Context) {
         if (id.length != 32) return
         val host = hostOf(info) ?: return
         // Bounded and sanitized: mDNS is unauthenticated, anyone can advertise.
-        if (!_found.value.containsKey(id) && _found.value.size >= MAX_FOUND) return
-        val name = info.serviceName.filter { !it.isISOControl() && it !in "\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069" }
-            .take(64).ifBlank { host }
+        if (id !in pinned && !_found.value.containsKey(id) && _found.value.size >= MAX_FOUND) return
+        val name = cleanName(info.serviceName).ifBlank { host }
         byServiceName[info.serviceName] = id
         _found.value = _found.value + (id to DiscoveredPc(id, name, host, info.port))
     }
 
-    private companion object { const val MAX_FOUND = 32 }
+    internal companion object {
+        const val MAX_FOUND = 32
+        const val MAX_QUEUE = 64
+
+        /**
+         * Drops control and format characters (Unicode Cc and Cf: bidi overrides
+         * and isolates, U+061C, zero-width marks) and keeps at most 64 code
+         * points, never splitting a surrogate pair. Same rule as iOS.
+         */
+        fun cleanName(raw: String): String {
+            val sb = StringBuilder()
+            var count = 0
+            var i = 0
+            while (i < raw.length && count < 64) {
+                val cp = raw.codePointAt(i)
+                i += Character.charCount(cp)
+                val type = Character.getType(cp)
+                if (type == Character.CONTROL.toInt() || type == Character.FORMAT.toInt()) continue
+                sb.appendCodePoint(cp)
+                count++
+            }
+            return sb.toString()
+        }
+    }
 
     private fun hostOf(info: NsdServiceInfo): String? {
         val addrs = if (Build.VERSION.SDK_INT >= 34) info.hostAddresses else listOfNotNull(@Suppress("DEPRECATION") info.host)

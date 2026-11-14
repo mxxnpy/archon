@@ -82,9 +82,12 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
     override val computers: StateFlow<List<PcRow>> = combine(_paired, discovery.found) { paired, found ->
         // Discovered addresses are only *candidates*: they are saved after an
         // authenticated resume succeeds (anyone can advertise a PC's public id).
+        // Paired PCs are always admitted by discovery, and keep the name from the
+        // authenticated pairing record (a spoofed announcement can't relabel them).
+        discovery.pinned = paired.mapTo(HashSet()) { it.agentId }
         val rows = paired.map { p ->
             val live = found[p.agentId]
-            PcRow(Target(p.agentId, live?.name ?: p.name, live?.host ?: p.host, live?.port ?: p.port), true, live != null)
+            PcRow(Target(p.agentId, p.name, live?.host ?: p.host, live?.port ?: p.port), true, live != null)
         }.sortedByDescending { it.online }
         val others = found.values.filter { f -> paired.none { it.agentId == f.agentId } }
             .map { PcRow(Target(it.agentId, it.name, it.host, it.port), paired = false, online = true) }

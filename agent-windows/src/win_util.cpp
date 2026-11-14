@@ -91,10 +91,31 @@ bool dpapi_unprotect(const arc::Bytes& in, arc::Bytes& out) {
     return true;
 }
 
+// Atomic, durable replace: write a temp file, flush it to disk, then rename
+// over the target. A crash leaves either the old file or the new one, never a
+// truncated or zero-filled agent.cfg (losing it would change the agent id and
+// every phone would have to pair again).
+// Returns 0 on success, otherwise the Win32 error code.
+static DWORD write_file_atomic(const std::wstring& path, const std::string& data) {
+    const std::wstring tmp = path + L".tmp";
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return GetLastError();
+    DWORD written = 0;
+    const bool ok = WriteFile(h, data.data(), DWORD(data.size()), &written, nullptr) && written == data.size() &&
+                    FlushFileBuffers(h);
+    DWORD err = ok ? 0 : GetLastError();
+    CloseHandle(h);
+    if (ok && !MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        err = GetLastError();
+    if (err) DeleteFileW(tmp.c_str());
+    return err;
+}
+
 Config load_config() {
     Config cfg;
     const std::wstring path = app_dir() + L"\\agent.cfg";
     std::ifstream in(path);
+    const bool existed = in.is_open();
     std::string line;
     bool have_id = false;
     while (std::getline(in, line)) {
@@ -106,17 +127,25 @@ Config load_config() {
             if (p > 0 && p < 65536) cfg.port = uint16_t(p);
         }
     }
+    in.close();
     if (!have_id) {
-        cfg.first_run = true;
-        cfg.agent_id = arc::random_array<16>();
-        const std::wstring tmp = path + L".tmp";
-        {
-            std::ofstream out(tmp, std::ios::trunc);
-            out << "# Archon agent configuration\n";
-            out << "id=" << arc::to_hex(cfg.agent_id) << "\n";
-            out << "port=" << cfg.port << "\n";
+        cfg.first_run = !existed;
+        if (existed) {
+            // Present but without a valid id (damaged or edited): keep a copy for
+            // recovery instead of silently overwriting it.
+            const std::wstring bad = path + L".bad";
+            if (CopyFileW(path.c_str(), bad.c_str(), FALSE))
+                log_line("agent.cfg had no valid id; kept a copy as agent.cfg.bad and created a new id");
+            else
+                log_line("agent.cfg had no valid id and could not be backed up; created a new id");
         }
-        MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        cfg.agent_id = arc::random_array<16>();
+        std::string data = "# Archon agent configuration\n";
+        data += "id=" + arc::to_hex(cfg.agent_id) + "\n";
+        data += "port=" + std::to_string(cfg.port) + "\n";
+        if (const DWORD e = write_file_atomic(path, data))
+            log_line("could not save agent.cfg (error " + std::to_string(e) +
+                     "); paired phones will need to pair again after a restart");
     }
     return cfg;
 }
@@ -124,20 +153,24 @@ Config load_config() {
 void save_lockout(int lockouts, int64_t locked_until) {
     const std::wstring path = app_dir() + L"\\agent.cfg";
     std::ifstream in(path);
-    std::string line, kept;
-    while (std::getline(in, line))
-        if (line.rfind("lockouts=", 0) != 0 && line.rfind("locked_until=", 0) != 0) kept += line + "\n";
-    in.close();
-    // Atomic replace: losing agent.cfg would change the agent id (phones would
-    // have to pair again), so never truncate it in place.
-    const std::wstring tmp = path + L".tmp";
-    {
-        std::ofstream out(tmp, std::ios::trunc);
-        out << kept << "lockouts=" << lockouts << "\nlocked_until=" << locked_until << "\n";
-        out.flush();
-        if (!out) return;
+    if (!in.is_open()) {
+        log_line("could not read agent.cfg; pairing lockout not saved");
+        return;
     }
-    MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    std::string line, kept;
+    bool have_id = false;
+    while (std::getline(in, line)) {
+        if (line.rfind("id=", 0) == 0) have_id = true;
+        if (line.rfind("lockouts=", 0) != 0 && line.rfind("locked_until=", 0) != 0) kept += line + "\n";
+    }
+    if (in.bad() || !have_id) {
+        log_line("agent.cfg unreadable; pairing lockout not saved");
+        return;
+    }
+    in.close();
+    kept += "lockouts=" + std::to_string(lockouts) + "\nlocked_until=" + std::to_string(locked_until) + "\n";
+    if (const DWORD e = write_file_atomic(path, kept))
+        log_line("could not save the pairing lockout to agent.cfg (error " + std::to_string(e) + ")");
 }
 
 static const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";

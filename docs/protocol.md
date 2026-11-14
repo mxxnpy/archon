@@ -95,9 +95,15 @@ controller                                 agent
 During the handshake ERROR frames are plaintext, so anyone on the LAN can forge
 them (the agent id is public in the mDNS TXT record). Controllers therefore:
 
-* treat plaintext 3, 8 and 10 as **not recognized**: stop retrying that
-  address, and only after *every* known address of that PC answered so, tell
-  the user and offer *Pair again* — never delete the stored pairing on their own;
+* treat plaintext 3, 8 and 10 as **not recognized**, and treat **any** other
+  refusal received before the channel is up (busy, version, malformed reply…)
+  as unverified too: move on to the next known address, and only after *every*
+  known address refused, stop. If any address answered "not recognized", report
+  that (and offer *Pair again*) rather than whichever refusal came last — a
+  spoofer chooses its refusal. Never delete the stored pairing on these;
+* once the channel is up, treat a framing error (zero or oversized length) or a
+  frame that fails decryption as a **lost connection** and reconnect: those bytes
+  are not authenticated, so they are not a verdict from the PC;
 * delete a pairing automatically only on ERROR 10 received **inside** the
   encrypted channel (an authenticated revocation);
 * treat a HELLO_ACK with an unexpected agent id or a `tag_s` that does not
@@ -168,7 +174,9 @@ Both nonces are fresh random values, so a recorded session cannot be replayed.
 * One attempt per code. After 5 wrong codes within 10 minutes, pairing is locked
   (ERROR 5) for 5 minutes, doubling on every consecutive lockout up to 24 h;
   a successful pairing resets the escalation. The escalation state is persisted,
-  so restarting the agent does not reset it.
+  so restarting the agent does not reset it. The user can lift a lock from the
+  PC (tray: *Desbloquear pareamento*); that keeps the escalation count, so a
+  guesser still on the network meets a longer lockout next time.
 * Pairing requests are flood-limited: at most one per source address every
   20 s (so one host can't exhaust the global budget) and 8 per minute overall
   (ERROR 7 beyond that).

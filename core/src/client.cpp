@@ -67,7 +67,7 @@ void Client::start(std::vector<std::pair<std::string, uint16_t>> addrs, Mode mod
     if (addrs.empty()) return;
     addrs_ = std::move(addrs);
     attempt_ = 0;
-    not_recognized_.assign(addrs_.size(), false);
+    refused_.assign(addrs_.size(), ErrorCode::None);
     mode_ = mode;
     if (record) record_ = *record;
     {
@@ -221,7 +221,7 @@ bool Client::run_connection(bool& ever_ready) {
                     live_ = true;
                     last_rx = Clock::now();
                     attempt_ = (attempt_ + addrs_.size() - 1) % addrs_.size();  // stick to what worked
-                    not_recognized_.assign(addrs_.size(), false);
+                    refused_.assign(addrs_.size(), ErrorCode::None);
                     // Re-subscribe on every (re)connection: the agent forgets per link.
                     if (meters_) append_frame(out, session.app(encode_flag(MsgType::SetMeters, true)));
                     status(ClientStatus::Connected, ErrorCode::None, host + "|" + std::to_string(port));
@@ -326,7 +326,11 @@ bool Client::run_connection(bool& ever_ready) {
             auto res = in.next(payload);
             if (res == FrameAssembler::Result::NeedMore) break;
             if (res == FrameAssembler::Result::Error) {
-                reason = ErrorCode::Protocol;
+                // Framing bytes are not authenticated: once the channel is up, a
+                // broken length prefix is an injected or damaged stream, not a
+                // verdict from the PC. Reconnect instead of giving up.
+                reason = session.state() == ControllerSession::State::Ready ? ErrorCode::ConnectionLost
+                                                                            : ErrorCode::Protocol;
                 done = true;
                 break;
             }
@@ -358,12 +362,21 @@ bool Client::run_connection(bool& ever_ready) {
     // any refusal (not recognized, busy, version, malformed reply…) may come from
     // a spoofer advertised first. Only give up once every known address refused.
     if (mode_ == Mode::Resume && !ever_ready && is_fatal(reason)) {
-        not_recognized_[(attempt_ + addrs_.size() - 1) % addrs_.size()] = true;
-        bool all = true;
-        for (bool b : not_recognized_) all = all && b;
+        refused_[(attempt_ + addrs_.size() - 1) % addrs_.size()] = reason;
+        bool all = true, any_not_recognized = false;
+        for (ErrorCode e : refused_) {
+            all = all && e != ErrorCode::None;
+            any_not_recognized = any_not_recognized || e == ErrorCode::NotRecognized;
+        }
         if (!all) {  // some address hasn't refused us (maybe just offline): keep trying
             status(ClientStatus::Reconnecting, reason, reason_text);
             return true;
+        }
+        // A spoofer can pick any refusal ("update the app"…); the real PC's
+        // "not recognized" is the one the user can act on (pair again).
+        if (any_not_recognized && reason != ErrorCode::NotRecognized) {
+            reason = ErrorCode::NotRecognized;
+            reason_text = "the computer did not recognize this phone";
         }
     }
     if (is_fatal(reason)) {

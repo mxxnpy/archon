@@ -766,10 +766,12 @@ void Server::revoke(const Id16& controller_id) {
 
 void Server::reset_pairing_lockout() {
     post([this] {
+        // Lift the current lock but keep the escalation count: if an attacker is
+        // still guessing, the next lockout is longer, not back to the minimum.
+        // A successful pairing resets the count.
         impl_->locked_until = {};
         impl_->failures.clear();
-        impl_->lockouts = 0;
-        observer_.on_pairing_lockout(0, 0);
+        observer_.on_pairing_lockout(impl_->lockouts, 0);
         impl_->log("pairing lockout cleared on the PC");
     });
 }
