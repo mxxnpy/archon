@@ -272,9 +272,8 @@ int wmain(int argc, wchar_t** argv) {
     // inactive, off the visible desktop (a game in use keeps the focus).
     const bool offscreen = !shot.empty() || hold > 0;
     if (offscreen) {
+        win.set_invisible(true);  // created off-screen, no taskbar button, never activated
         win.show(false);
-        SetWindowLongPtrW(win.hwnd(), GWL_EXSTYLE,
-                          GetWindowLongPtrW(win.hwnd(), GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
     } else {
         win.show();
     }
@@ -284,7 +283,7 @@ int wmain(int argc, wchar_t** argv) {
     RECT r{0, 0, MulDiv(w, int(dpi), 96), MulDiv(h, int(dpi), 96)};
     AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, dpi);
     const int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    const int px = !offscreen ? 40 : vx - (r.right - r.left) - 200;  // off-screen for screenshots and checks
+    const int px = !offscreen ? 40 : vx - (r.right - r.left) - 4000;  // stays off every monitor
     SetWindowPos(win.hwnd(), !offscreen ? nullptr : HWND_BOTTOM, px, !offscreen ? 40 : vy, r.right - r.left,
                  r.bottom - r.top, (!offscreen ? SWP_NOZORDER : 0) | SWP_NOACTIVATE);
     pump(2500);  // dump + the profile engine's first look (1.5 s)

@@ -31,13 +31,18 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force shots | Out-Null
           $exe = "build/agent-windows/archon_window_demo.exe"
-          & $exe --shot shots/win-mixer.png
-          & $exe --shot shots/win-mixer-1280.png --size 1280x800
-          & $exe --shot shots/win-narrow.png --size 420x760
-          & $exe --shot shots/win-profiles.png --panel profiles
-          & $exe --shot shots/win-editor.png --panel editor
-          & $exe --shot shots/win-settings.png --panel settings
-          & $exe --shot shots/win-focus.png --focus 3
+          # A windowed program: wait for each run and fail on its exit code.
+          function shot([string[]]$a) {
+            $p = Start-Process -FilePath $exe -ArgumentList $a -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "screenshot failed: $a" }
+          }
+          shot @("--shot", "shots/win-mixer.png")
+          shot @("--shot", "shots/win-mixer-1280.png", "--size", "1280x800")
+          shot @("--shot", "shots/win-narrow.png", "--size", "420x760")
+          shot @("--shot", "shots/win-profiles.png", "--panel", "profiles")
+          shot @("--shot", "shots/win-editor.png", "--panel", "editor")
+          shot @("--shot", "shots/win-settings.png", "--panel", "settings")
+          shot @("--shot", "shots/win-focus.png", "--focus", "3")
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: archon-windows-screenshots

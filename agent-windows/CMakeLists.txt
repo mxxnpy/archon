@@ -60,6 +60,10 @@ target_link_libraries(archon_window_demo PRIVATE archon_core archon_agent_common
   shell32 shlwapi comctl32 windowscodecs advapi32 user32 gdi32 version propsys secur32 dwmapi d2d1 dwrite
   uiautomationcore)
 target_compile_definitions(archon_window_demo PRIVATE UNICODE _UNICODE)
+# A windowed program (no console window pops up on each run); results are exit codes.
+if(MSVC)
+  target_link_options(archon_window_demo PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup)
+endif()
 if(MSVC)
   target_compile_options(archon_window_demo PRIVATE /W4 /utf-8)
 endif()

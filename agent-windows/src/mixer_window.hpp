@@ -78,6 +78,9 @@ public:
     // Shows the window (creates it the first time). activate = bring it to the
     // front; false never takes focus from the app in use (e.g. a game).
     void show(bool activate = true);
+    // Tests and screenshots: the window is created off every monitor, with no
+    // taskbar button, and never activates — nothing appears on the user's screen.
+    void set_invisible(bool on) { invisible_ = on; }
     void hide();
     bool visible() const;
     // From the tray UI (UI thread).
@@ -169,6 +172,7 @@ private:
     bool pt_ = true;
     bool reduce_motion_ = false;
     bool attached_ = false;
+    bool invisible_ = false;
 
     Microsoft::WRL::ComPtr<ID2D1Factory> d2d_;
     Microsoft::WRL::ComPtr<IDWriteFactory> dw_;

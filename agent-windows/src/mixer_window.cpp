@@ -118,8 +118,11 @@ void MixerWindow::show(bool activate) {
     if (!hwnd_) {
         const UINT dpi = GetDpiForSystem();
         const int w = MulDiv(960, int(dpi), 96), h = MulDiv(680, int(dpi), 96);
-        hwnd_ = CreateWindowExW(0, kClass, L"Archon", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, w, h, nullptr,
-                                nullptr, inst_, this);
+        // Invisible mode: born off every monitor, no taskbar button, never activated.
+        const int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        hwnd_ = CreateWindowExW(invisible_ ? WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE : 0, kClass, L"Archon",
+                                WS_OVERLAPPEDWINDOW, invisible_ ? vx - w - 4000 : CW_USEDEFAULT,
+                                invisible_ ? vy : CW_USEDEFAULT, w, h, nullptr, nullptr, inst_, this);
         if (!hwnd_) return;
         BOOL dark = TRUE;
         DwmSetWindowAttribute(hwnd_, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof dark);
@@ -134,7 +137,7 @@ void MixerWindow::show(bool activate) {
         attached_ = true;
     }
     send(arc::encode_flag(arc::MsgType::SetMeters, !reduce_motion_));  // live dots only while shown
-    if (activate) {
+    if (activate && !invisible_) {
         ShowWindow(hwnd_, IsIconic(hwnd_) ? SW_RESTORE : SW_SHOW);
         SetForegroundWindow(hwnd_);
     } else {
