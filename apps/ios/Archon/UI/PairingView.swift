@@ -73,7 +73,10 @@ struct PairingView: View {
             }
             if s == .connected { UINotificationFeedbackGenerator().notificationOccurred(.success) }
         }
-        .onAppear { focused = true }
+        .onAppear {
+            if let demo = model.demoCode { code = demo }  // debug screenshots only
+            focused = true
+        }
     }
 
     static func spoken(_ s: LinkStatus, _ e: Int) -> String {

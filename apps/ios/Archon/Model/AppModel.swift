@@ -76,17 +76,67 @@ final class AppModel: ObservableObject {
     private var client: CoreClient!
     private var requestedIcons = Set<String>()
     private var connectedVia: String?
+    /// Debug-only fixture state for UI screenshots (launch argument `-ArchonDemo <screen>`).
+    private(set) var demoRows: [PCRow]?
+    private(set) var demoCode: String?
+    private var demo = false
 
     init() {
         paired = store.all()
         client = CoreClient(controllerId: store.controllerId, name: UIDevice.current.name) { [weak self] ev in
             Task { @MainActor in self?.apply(ev) }
         }
+        #if DEBUG
+        if let i = CommandLine.arguments.firstIndex(of: "-ArchonDemo"), i + 1 < CommandLine.arguments.count {
+            loadDemo(CommandLine.arguments[i + 1])
+        }
+        #endif
     }
+
+    #if DEBUG
+    private func loadDemo(_ name: String) {
+        demo = true
+        let pc = Target(agentId: String(repeating: "a", count: 32), name: "DESKTOP-01", host: "192.168.0.10", port: 47321)
+        demoRows = [
+            PCRow(target: pc, paired: true, online: true),
+            PCRow(target: Target(agentId: String(repeating: "b", count: 32), name: "NOTEBOOK-SALA", host: "192.168.0.22", port: 47321), paired: true, online: false),
+            PCRow(target: Target(agentId: String(repeating: "c", count: 32), name: "ESTUDIO-PC", host: "192.168.0.31", port: 47321), paired: false, online: true),
+        ]
+        func mixer() {
+            endpoints = ["e1": Endpoint(id: "e1", name: "SteelSeries Sonar - Gaming", volume: 6400, muted: false, isDefault: true, meter: 1)]
+            let list = [
+                Source(id: "s1", endpointId: "e1", name: "Spotify", iconKey: "", volume: 7200, muted: false, playing: true, system: false, meter: 2),
+                Source(id: "s2", endpointId: "e1", name: "Discord", iconKey: "", volume: 8000, muted: false, playing: true, system: false, meter: 3),
+                Source(id: "s3", endpointId: "e1", name: "Counter-Strike 2", iconKey: "", volume: 5800, muted: false, playing: false, system: false, meter: 4),
+                Source(id: "s4", endpointId: "e1", name: "Brave", iconKey: "", volume: 4500, muted: true, playing: false, system: false, meter: 5),
+                Source(id: "s5", endpointId: "e1", name: "System sounds", iconKey: "", volume: 4000, muted: false, playing: false, system: true, meter: 6),
+            ]
+            sources = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
+            levels = [2: 0.9, 3: 0.4]
+            synced = true
+            screen = .mixer(pc)
+        }
+        switch name {
+        case "pairing":
+            screen = .pairing(pc); status = .awaitingCode; demoCode = "4829"
+        case "pairing-wrong":
+            screen = .pairing(pc); status = .failed; error = CoreErr.wrongCode
+        case "mixer":
+            mixer(); status = .connected
+        case "reconnecting":
+            mixer(); status = .reconnecting
+        case "notrecognized":
+            screen = .mixer(pc); status = .failed; error = CoreErr.notRecognized
+        default:
+            screen = .computers
+        }
+    }
+    #endif
 
     // MARK: computers
 
     func rows(found: [String: DiscoveredPC]) -> [PCRow] {
+        if let demoRows { return demoRows }
         // Discovered addresses are only candidates; they're saved after an
         // authenticated resume succeeds (anyone can advertise a PC's public id).
         var rows = paired.map { p -> PCRow in
@@ -104,6 +154,7 @@ final class AppModel: ObservableObject {
     // MARK: lifecycle
 
     func foreground() {
+        if demo { return }  // fixtures only: no discovery, no network
         discovery.start()
         if case .mixer(let t) = screen { connect(t) }
     }
@@ -170,6 +221,7 @@ final class AppModel: ObservableObject {
     // MARK: mixer
 
     func setMetersVisible(_ on: Bool) {
+        if demo { return }
         client.setMeters(on)
         if !on { levels = [:] }
     }
