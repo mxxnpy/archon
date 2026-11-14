@@ -198,13 +198,14 @@ int wmain(int argc, wchar_t** argv) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     std::wstring shot, panel;
-    int w = 960, h = 680, tabs = 0;
+    int w = 960, h = 680, tabs = 0, hold = 0;
     for (int i = 1; i < argc; ++i) {
         const std::wstring a = argv[i];
         if (a == L"--shot" && i + 1 < argc) shot = argv[++i];
         else if (a == L"--panel" && i + 1 < argc) panel = argv[++i];
         else if (a == L"--size" && i + 1 < argc) swscanf_s(argv[++i], L"%dx%d", &w, &h);
         else if (a == L"--focus" && i + 1 < argc) tabs = _wtoi(argv[++i]);
+        else if (a == L"--hold" && i + 1 < argc) hold = _wtoi(argv[++i]);  // off-screen, for UI Automation checks
     }
     FakeMixer mixer;
     MemStore store;
@@ -269,7 +270,8 @@ int wmain(int argc, wchar_t** argv) {
     win.create(GetModuleHandleW(nullptr), &server, host);
     // Screenshots never take focus or appear on screen: the window is shown
     // inactive, off the visible desktop (a game in use keeps the focus).
-    if (!shot.empty()) {
+    const bool offscreen = !shot.empty() || hold > 0;
+    if (offscreen) {
         win.show(false);
         SetWindowLongPtrW(win.hwnd(), GWL_EXSTYLE,
                           GetWindowLongPtrW(win.hwnd(), GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
@@ -282,9 +284,9 @@ int wmain(int argc, wchar_t** argv) {
     RECT r{0, 0, MulDiv(w, int(dpi), 96), MulDiv(h, int(dpi), 96)};
     AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, dpi);
     const int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    const int px = shot.empty() ? 40 : vx - (r.right - r.left) - 200;  // off-screen for screenshots
-    SetWindowPos(win.hwnd(), shot.empty() ? nullptr : HWND_BOTTOM, px, shot.empty() ? 40 : vy, r.right - r.left,
-                 r.bottom - r.top, (shot.empty() ? SWP_NOZORDER : 0) | SWP_NOACTIVATE);
+    const int px = !offscreen ? 40 : vx - (r.right - r.left) - 200;  // off-screen for screenshots and checks
+    SetWindowPos(win.hwnd(), !offscreen ? nullptr : HWND_BOTTOM, px, !offscreen ? 40 : vy, r.right - r.left,
+                 r.bottom - r.top, (!offscreen ? SWP_NOZORDER : 0) | SWP_NOACTIVATE);
     pump(2500);  // dump + the profile engine's first look (1.5 s)
     if (!panel.empty()) {
         win.open_named(std::string(panel.begin(), panel.end()));
@@ -301,6 +303,12 @@ int wmain(int argc, wchar_t** argv) {
         win.destroy();
         server.stop();
         return ok ? 0 : 1;
+    }
+    if (hold > 0) {
+        pump(DWORD(hold) * 1000);
+        win.destroy();
+        server.stop();
+        return 0;
     }
     MSG m;
     while (IsWindowVisible(win.hwnd()) && GetMessageW(&m, nullptr, 0, 0) > 0) {

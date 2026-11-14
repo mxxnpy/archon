@@ -40,7 +40,8 @@ struct WindowHost {
 struct Widget {
     enum class Kind {
         OutputPill, IconButton, MasterRing, Card, Mute, Header, Text, PanelClose, ProfileRow, ProfileApply,
-        ProfileEdit, PrimaryButton, SecondaryButton, DangerButton, Toggle, DayChip, TimeStepper, Choice, DeviceRow
+        ProfileEdit, PrimaryButton, SecondaryButton, DangerButton, Toggle, DayChip, TimeStepper, Choice, DeviceRow,
+        Surface  // a card behind other widgets (not reachable)
     };
     Kind kind = Kind::Text;
     std::string key;            // stable identity (focus, screen readers)
@@ -127,6 +128,7 @@ private:
     void draw_text(const std::wstring& s, const D2D1_RECT_F& r, IDWriteTextFormat* f, D2D1_COLOR_F c,
                    DWRITE_TEXT_ALIGNMENT align = DWRITE_TEXT_ALIGNMENT_LEADING, bool wrap = false);
     void draw_glyph(const std::wstring& g, const D2D1_RECT_F& r, float size, D2D1_COLOR_F c);
+    float text_width(const std::wstring& s, IDWriteTextFormat* f, float max_w);
     ID2D1Bitmap* icon_bitmap(const std::string& key);
     void make_formats();
 

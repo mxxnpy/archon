@@ -45,9 +45,8 @@ const wchar_t* kGlyphClose = L"\xE711";
 const wchar_t* kGlyphEdit = L"\xE70F";
 const wchar_t* kGlyphHeadphones = L"\xE7F6";
 
-constexpr float kTop = 56;       // top bar height
-constexpr float kLeft = 320;     // master column (wide layout)
-constexpr float kCardW = 172, kCardH = 188, kGap = 12, kPad = 16;
+constexpr float kTop = 64;       // top bar height
+constexpr float kCardH = 188, kPad = 24;
 constexpr float kSheet = 380;    // panel width
 
 std::wstring wstr(const std::string& s) { return to_wide(s); }
@@ -319,7 +318,7 @@ void MixerWindow::layout() {
         p.key = "output";
         p.name = pt_ ? L"Dispositivo de saída" : L"Output device";
         p.sub = out ? wstr(out->name) : (pt_ ? L"Sem saída de som" : L"No output");
-        p.r = D2D1::RectF(kPad, 8, kPad + std::min(320.f, std::max(160.f, W * 0.34f)), 48);
+        p.r = D2D1::RectF(kPad, 12, kPad + std::min(320.f, std::max(160.f, W * 0.34f)), 52);
         p.glyph = kGlyphChevron;
         p.invoke = [this] {
             POINT pt{LONG((widgets_[0].r.left) * scale_), LONG(widgets_[0].r.bottom * scale_)};
@@ -335,7 +334,7 @@ void MixerWindow::layout() {
         t.name = phones_ == 0 ? (pt_ ? L"Nenhum celular conectado" : L"No phone connected")
                  : phones_ == 1 ? (pt_ ? L"1 celular conectado" : L"1 phone connected")
                                 : std::to_wstring(phones_) + (pt_ ? L" celulares conectados" : L" phones connected");
-        t.r = D2D1::RectF(p.r.right + 16, 8, W - 3 * 48 - kPad, 48);
+        t.r = D2D1::RectF(p.r.right + 16, 12, W - 3 * 48 - kPad, 52);
         if (t.r.right - t.r.left < 170) t.sub = std::to_wstring(phones_);  // narrow: dot + count
         if (t.r.right - t.r.left > 24) add(t);
     }
@@ -350,7 +349,7 @@ void MixerWindow::layout() {
         b.name = std::move(name);
         b.on = on;
         b.danger = danger;
-        b.r = D2D1::RectF(bx, 8, bx + 40, 48);
+        b.r = D2D1::RectF(bx, 12, bx + 40, 52);
         b.invoke = std::move(fn);
         add(b);
         bx += 48;
@@ -386,31 +385,58 @@ void MixerWindow::layout() {
 }
 
 void MixerWindow::layout_body(float x0, float y0, float W, float H) {
+    // 8 px grid: 24 margins, 16 gaps. Wide: the master card on the left and the
+    // card grid on the right, both starting on the same line. Narrow: one
+    // column that scrolls as a whole.
+    constexpr float M = 24, G = 16, kMinCard = 168, kMaxCard = 232, kMasterW = 296;
     const bool wide = W >= 760;
     const arc::EndpointInfo* out = model_.output_or_default(output_);
     const bool covered = panel_ != Panel::None;  // the sheet is on top: body is not interactive
-    auto add = [&](Widget w) {
+    const float top = y0 + 8;
+    grid_clip_ = wide ? D2D1::RectF(x0 + M + kMasterW + 24 - 6, y0, x0 + W, y0 + H) : D2D1::RectF(x0, y0, x0 + W, y0 + H);
+    const float shift = wide ? 0.f : scroll_;  // narrow: everything scrolls together
+    auto add = [&](Widget w, bool scrolls) {
         if (covered) w.focusable = false;
+        w.scrolls = scrolls;
+        if (scrolls) w.clipped = w.r.bottom <= grid_clip_.top || w.r.top >= grid_clip_.bottom;
         widgets_.push_back(std::move(w));
     };
-    float gx, gy, gw;
-    float master_cx, master_cy, radius;
-    if (wide) {
-        master_cx = x0 + kLeft / 2;
-        radius = 110;
-        master_cy = y0 + 24 + radius;
-        gx = x0 + kLeft;
-        gy = y0;
-        gw = W - kLeft;
-    } else {
-        master_cx = x0 + W / 2;
-        radius = 90;
-        master_cy = y0 + 16 + radius;
-        gx = x0;
-        gy = master_cy + radius + 110;
-        gw = W;
-    }
+    auto text_line = [&](const std::string& key, std::wstring s, const wchar_t* glyph, D2D1_RECT_F r, bool scrolls) {
+        Widget l;
+        l.kind = Widget::Kind::Text;
+        l.key = key;
+        l.focusable = false;
+        l.name = std::move(s);
+        if (glyph) l.glyph = glyph;
+        l.on = true;
+        l.r = r;
+        add(l, scrolls);
+    };
+
+    // ---- master card ----
+    float master_bottom = top;
     if (out) {
+        // Title on the same line as the grid's first header; the card starts with the first row.
+        const float px = x0 + M, pw = wide ? kMasterW : W - 2 * M, py = top - shift + 32;
+        const float R = wide ? 96.f : 84.f;
+        const float cx = px + pw / 2, cy = py + 24 + R;
+        float ly = cy + R + 8 + 40 + 16;  // ring, mute button, gap
+        const bool listening = streams_ > 0;
+        const arc::Profile* ap = model_.active_profile();
+        const float ph = (ly - py) + (listening ? 28.f : 0.f) + (ap ? 28.f : 0.f) + 12;
+        Widget card;
+        card.kind = Widget::Kind::Surface;
+        card.key = "master-card";
+        card.focusable = false;
+        card.r = D2D1::RectF(px, py, px + pw, py + ph);
+        add(card, !wide);
+        Widget h;
+        h.kind = Widget::Kind::Header;
+        h.key = "master-title";
+        h.focusable = false;
+        h.name = pt_ ? L"Volume geral" : L"Master volume";
+        h.r = D2D1::RectF(px + 4, py - 32, px + pw, py - 10);
+        add(h, !wide);
         Widget m;
         m.kind = Widget::Kind::MasterRing;
         m.key = "master";
@@ -419,61 +445,52 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
         m.volume = out->volume;
         m.muted = out->muted;
         m.name = (pt_ ? L"Volume geral, " : L"Master volume, ") + wstr(out->name);
-        m.r = D2D1::RectF(master_cx - radius, master_cy - radius, master_cx + radius, master_cy + radius);
-        add(m);
+        m.r = D2D1::RectF(cx - R, cy - R, cx + R, cy + R);
+        add(m, !wide);
         Widget mb;
         mb.kind = Widget::Kind::Mute;
         mb.key = "master:mute";
         mb.endpoint = true;
         mb.target = out->id;
         mb.on = out->muted;
-        mb.name = out->muted ? (pt_ ? L"Desmutar o volume geral" : L"Unmute master volume")
-                             : (pt_ ? L"Mutar o volume geral" : L"Mute master volume");
-        mb.r = D2D1::RectF(master_cx - 20, master_cy + radius + 6, master_cx + 20, master_cy + radius + 46);
-        add(mb);
-        float ly = mb.r.bottom + 12;
-        if (streams_ > 0) {
-            Widget l;
-            l.kind = Widget::Kind::Text;
-            l.key = "listening";
-            l.focusable = false;
-            l.glyph = kGlyphHeadphones;
-            l.on = true;
-            l.name = pt_ ? L"Um celular está ouvindo este PC" : L"A phone is listening to this PC";
-            l.r = D2D1::RectF(master_cx - 140, ly, master_cx + 140, ly + 24);
-            add(l);
-            ly += 26;
+        // A checkbox: fixed name, the state is read as checked / not checked.
+        mb.name = pt_ ? L"Mutar o volume geral" : L"Mute master volume";
+        mb.r = D2D1::RectF(cx - 20, cy + R + 8, cx + 20, cy + R + 48);
+        add(mb, !wide);
+        if (listening) {
+            text_line("listening", pt_ ? L"Um celular está ouvindo este PC" : L"A phone is listening to this PC",
+                      kGlyphHeadphones, D2D1::RectF(px + 12, ly, px + pw - 12, ly + 24), !wide);
+            ly += 28;
         }
-        if (const arc::Profile* ap = model_.active_profile()) {
-            Widget l;
-            l.kind = Widget::Kind::Text;
-            l.key = "active-profile";
-            l.focusable = false;
-            l.name = (pt_ ? L"Perfil em uso: " : L"Profile in use: ") + wstr(ap->name);
-            l.r = D2D1::RectF(master_cx - 140, ly, master_cx + 140, ly + 24);
-            add(l);
+        if (ap) {
+            text_line("active-profile", (pt_ ? L"Perfil em uso: " : L"Profile in use: ") + wstr(ap->name), nullptr,
+                      D2D1::RectF(px + 12, ly, px + pw - 12, ly + 24), !wide);
+            ly += 28;
         }
+        master_bottom = py + ph + shift;
     }
 
-    // Card grid (scrolls).
-    grid_clip_ = D2D1::RectF(gx, gy, gx + gw, y0 + H);
-    const int cols = std::max(1, int((gw - 2 * kPad + kGap) / (kCardW + kGap)));
-    float y = gy + kPad - scroll_;
+    // ---- card grid ----
+    const float gx = wide ? x0 + M + kMasterW + 24 : x0 + M;
+    const float gw = wide ? W - gx - M : W - 2 * M;
+    const int cols = std::max(1, int((gw + G) / (kMinCard + G)));
+    const float cw = std::min(kMaxCard, (gw - G * float(cols - 1)) / float(cols));
+    float y = (wide ? top : master_bottom + 24) - scroll_;
     int col = 0;
-    auto place = [&](Widget& w) {
-        const float cx = gx + kPad + float(col) * (kCardW + kGap);
-        w.r = D2D1::RectF(cx, y, cx + kCardW, y + kCardH);
-        w.scrolls = true;
-        w.clipped = w.r.bottom <= grid_clip_.top || w.r.top >= grid_clip_.bottom;
-        if (++col == cols) {
-            col = 0;
-            y += kCardH + kGap;
-        }
+    auto header = [&](const std::string& key, std::wstring s) {
+        Widget h;
+        h.kind = Widget::Kind::Header;
+        h.key = key;
+        h.focusable = false;
+        h.name = std::move(s);
+        h.r = D2D1::RectF(gx + 4, y, gx + gw, y + 22);
+        add(h, true);
+        y += 22 + 10;
     };
     auto newline = [&] {
         if (col != 0) {
             col = 0;
-            y += kCardH + kGap;
+            y += kCardH + G;
         }
     };
     auto card = [&](const std::string& key, bool endpoint, const std::string& target, std::wstring name, uint16_t vol,
@@ -494,24 +511,29 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
         w.system = system;
         w.tab = tab;
         w.input = input;
-        place(w);
+        const float cx = gx + float(col) * (cw + G);
+        w.r = D2D1::RectF(cx, y, cx + cw, y + kCardH);
+        if (++col == cols) {
+            col = 0;
+            y += kCardH + G;
+        }
         Widget m;
         m.kind = Widget::Kind::Mute;
         m.key = key + ":mute";
         m.endpoint = endpoint;
         m.target = target;
         m.on = muted;
-        m.scrolls = true;
-        m.clipped = w.clipped;
-        m.name = (muted ? (pt_ ? L"Desmutar " : L"Unmute ") : (pt_ ? L"Mutar " : L"Mute ")) + w.name;
-        m.r = D2D1::RectF(w.r.right - 44, w.r.top + 4, w.r.right - 4, w.r.top + 44);
-        add(w);
-        add(m);
+        m.name = (pt_ ? L"Mutar " : L"Mute ") + w.name;  // checkbox: state read as checked / not checked
+        m.r = D2D1::RectF(w.r.right - 48, w.r.top + 8, w.r.right - 8, w.r.top + 48);
+        add(w, true);
+        add(m, true);
     };
+    const auto apps = out ? model_.apps_on(out->id) : std::vector<const arc::SourceInfo*>{};
+    const auto tabs = out ? model_.tabs_on(out->id) : std::vector<const arc::SourceInfo*>{};
+    header("apps-header", pt_ ? L"Microfone e apps" : L"Microphone and apps");
     if (const arc::EndpointInfo* mic = model_.microphone())
         card("mic", true, mic->id, pt_ ? L"Microfone" : L"Microphone", mic->volume, mic->muted,
              model_.level(mic->meter) > 0.02f, mic->meter, "", wstr(mic->name), false, false, true);
-    const auto apps = out ? model_.apps_on(out->id) : std::vector<const arc::SourceInfo*>{};
     for (const arc::SourceInfo* s : apps) {
         std::wstring sub;
         if (!s->route.empty())
@@ -519,37 +541,27 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
         card("src:" + s->id, false, s->id, s->system_sounds ? (pt_ ? L"Sons do sistema" : L"System sounds") : wstr(s->name),
              s->volume, s->muted, s->playing, s->meter, s->icon_key, sub, s->system_sounds, false, false);
     }
-    const auto tabs = out ? model_.tabs_on(out->id) : std::vector<const arc::SourceInfo*>{};
-    if (apps.empty() && tabs.empty()) {
-        newline();
+    newline();
+    if (apps.empty()) {
         Widget e;
         e.kind = Widget::Kind::Text;
         e.key = "empty";
         e.focusable = false;
         e.name = pt_ ? L"Nenhum app usando este dispositivo agora." : L"No apps are using this device right now.";
-        e.r = D2D1::RectF(gx + kPad, y, gx + gw - kPad, y + 40);
-        e.scrolls = true;
-        add(e);
-        y += 40;
+        e.r = D2D1::RectF(gx + 4, y, gx + gw, y + 32);
+        add(e, true);
+        y += 32 + G;
     }
     if (!tabs.empty()) {
-        newline();
-        Widget h;
-        h.kind = Widget::Kind::Header;
-        h.key = "tabs-header";
-        h.focusable = false;
-        h.name = pt_ ? L"Abas do navegador" : L"Browser tabs";
-        h.r = D2D1::RectF(gx + kPad, y + 8, gx + gw - kPad, y + 36);
-        h.scrolls = true;
-        add(h);
-        y += 40;
+        y += 8;
+        header("tabs-header", pt_ ? L"Abas do navegador" : L"Browser tabs");
         for (const arc::SourceInfo* s : tabs)
             card("src:" + s->id, false, s->id, wstr(s->name), s->volume, s->muted, s->playing, 0, s->icon_key,
                  wstr(s->detail), false, true, false);
+        newline();
     }
-    newline();
-    const float content = y + scroll_ - (gy + kPad) + kPad;
-    scroll_max_ = std::max(0.f, content - (grid_clip_.bottom - grid_clip_.top));
+    const float content = y + scroll_ - y0 + M;
+    scroll_max_ = std::max(0.f, content - H);
     if (scroll_ > scroll_max_) scroll_ = scroll_max_;
 }
 
@@ -855,6 +867,14 @@ void MixerWindow::draw_text(const std::wstring& s, const D2D1_RECT_F& r, IDWrite
     rt_->DrawTextLayout(D2D1::Point2F(r.left, r.top), lay.Get(), brush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
+float MixerWindow::text_width(const std::wstring& s, IDWriteTextFormat* f, float max_w) {
+    ComPtr<IDWriteTextLayout> lay;
+    if (s.empty() || FAILED(dw_->CreateTextLayout(s.c_str(), UINT32(s.size()), f, max_w, 100, &lay))) return 0;
+    DWRITE_TEXT_METRICS m{};
+    lay->GetMetrics(&m);
+    return std::min(max_w, m.widthIncludingTrailingWhitespace);
+}
+
 void MixerWindow::draw_glyph(const std::wstring& g, const D2D1_RECT_F& r, float size, D2D1_COLOR_F c) {
     ComPtr<IDWriteTextFormat> f;
     dw_->CreateTextFormat(icon_font_.c_str(), nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -957,8 +977,10 @@ void MixerWindow::draw_widget(const Widget& w) {
                 draw_text(w.name, D2D1::RectF(r.left, r.top - 18, r.right, r.top), f_small_.Get(), kMuted);
                 round_fill(r, 12, kRaised);  // the text box itself is a child EDIT on top
             } else if (!w.glyph.empty()) {
-                draw_glyph(w.glyph, D2D1::RectF(r.left, r.top, r.left + 24, r.bottom), 14, kAccent);
-                draw_text(w.name, D2D1::RectF(r.left + 28, r.top, r.right, r.bottom), f_caption_.Get(), kPaper);
+                const float tw = text_width(w.name, f_caption_.Get(), r.right - r.left - 26);
+                const float lx = (r.left + r.right) / 2 - (tw + 26) / 2;
+                draw_glyph(w.glyph, D2D1::RectF(lx, r.top, lx + 18, r.bottom), 14, kAccent);
+                draw_text(w.name, D2D1::RectF(lx + 26, r.top, lx + 26 + tw + 1, r.bottom), f_caption_.Get(), kPaper);
             } else {
                 const bool center = w.key == "active-profile" || w.key == "empty";
                 draw_text(w.name, r, f_caption_.Get(), kMuted,
@@ -966,6 +988,9 @@ void MixerWindow::draw_widget(const Widget& w) {
             }
             break;
         }
+        case K::Surface:
+            round_fill(r, 24, kSurface);
+            break;
         case K::Header:
             draw_text(w.name, r, w.key.find(":title") != std::string::npos ? f_title_.Get() : f_caption_.Get(),
                       w.key.find(":title") != std::string::npos ? kPaper : kMuted);
@@ -977,17 +1002,27 @@ void MixerWindow::draw_widget(const Widget& w) {
             draw_ring(c, rad, 8, f, w.muted ? kEdge : kAccent, 9);
             const int v = shown_volume(w);
             const std::wstring n = std::to_wstring((v * 100 + 5000) / 10000);
-            const float big = rad > 100 ? 64.f : 52.f;
+            const float big = rad > 90 ? 60.f : 52.f;
             ComPtr<IDWriteTextLayout> lay;
-            dw_->CreateTextLayout(n.c_str(), UINT32(n.size()), f_master_.Get(), 200, 80, &lay);
+            dw_->CreateTextLayout(n.c_str(), UINT32(n.size()), f_master_.Get(), 200, 90, &lay);
             DWRITE_TEXT_RANGE all{0, UINT32(n.size())};
             lay->SetFontSize(big, all);
+            lay->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
             DWRITE_TEXT_METRICS m{};
             lay->GetMetrics(&m);
+            DWRITE_LINE_METRICS line{};
+            UINT32 lines = 0;
+            lay->GetLineMetrics(&line, 1, &lines);
+            const float pct_w = text_width(L"%", f_body_.Get(), 40);
+            const float total = m.width + 3 + pct_w;
+            const float left = c.x - total / 2;
+            const float top = c.y - line.height / 2;  // the line box centred on the ring
             brush_->SetColor(w.muted ? kMuted : kPaper);
-            rt_->DrawTextLayout(D2D1::Point2F(c.x - m.width / 2 - 6, c.y - 40), lay.Get(), brush_.Get());
-            draw_text(L"%", D2D1::RectF(c.x + m.width / 2 - 4, c.y - 4, c.x + m.width / 2 + 24, c.y + 26), f_body_.Get(),
-                      kMuted);
+            rt_->DrawTextLayout(D2D1::Point2F(left, top), lay.Get(), brush_.Get());
+            // "%" sits on the number's baseline.
+            const float base = top + line.baseline;
+            draw_text(L"%", D2D1::RectF(left + m.width + 3, base - 20, left + m.width + 3 + pct_w + 2, base + 2),
+                      f_body_.Get(), kMuted);
             break;
         }
         case K::Card: {
