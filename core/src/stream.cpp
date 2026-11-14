@@ -117,6 +117,14 @@ void StreamReceiver::run() {
                     early_.push_back(Datagram{from, Bytes(buf.data(), buf.data() + n)});
                     continue;
                 }
+                // The key may have just arrived while this loop was draining: the
+                // datagrams kept before it go first, or the newer one would start
+                // the sequence and they would be dropped as late.
+                if (!replay_.empty()) {
+                    std::vector<Datagram> replay;
+                    replay.swap(replay_);
+                    for (const Datagram& g : replay) accept_locked(g.from, g.data.data(), g.data.size(), ready);
+                }
                 accept_locked(from, buf.data(), size_t(n), ready);
             }
             // Outside the lock: the app may call stop() from its callback.

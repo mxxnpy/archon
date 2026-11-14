@@ -624,3 +624,38 @@ TEST(v13_late_failure_of_an_old_stream_is_ignored) {
     rig.srv->stream_failed(new_id, ErrorCode::ConnectionLost);
     CHECK(eventually([&] { return !a.streaming(); }));
 }
+
+// Datagrams kept before the key must play before newer ones that arrive while
+// the key is being installed (a race: the newer one used to start the sequence
+// and the kept ones were then dropped as late — the first frames went missing).
+TEST(v13_kept_datagrams_play_before_newer_ones) {
+    for (int round = 0; round < 3; ++round) {
+        Collect c;
+        StreamReceiver rx(c);
+        std::string err;
+        const uint16_t port = rx.open(&err);
+        REQUIRE(port != 0);
+        const Key32 key = random_array<32>();
+        std::atomic<bool> go{true};
+        std::thread tx([&] {
+            std::string e;
+            net::socket_t s = net::bind_udp(0, nullptr, &e);
+            for (uint64_t seq = 0; seq < 60 && go; ++seq) {
+                const Bytes p = pkt(uint8_t(seq));
+                const Bytes d = seal_audio(key, seq, 0, kStreamCodecOpus, p.data(), p.size());
+                net::send_udp(s, "127.0.0.1", port, d.data(), d.size());
+                std::this_thread::sleep_for(1ms);
+            }
+            net::close_socket(s);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(6 + round));  // the key arrives mid-stream
+        rx.start(key, "127.0.0.1");
+        tx.join();
+        CHECK(eventually([&] { return c.size() >= 55; }));
+        std::lock_guard<std::mutex> lk(c.mu);
+        REQUIRE(!c.got.empty());
+        CHECK(c.got.front().seq == 0);  // nothing from before the key was lost
+        for (size_t i = 1; i < c.got.size(); ++i) CHECK(c.got[i].seq == c.got[i - 1].seq + 1);
+        rx.close();
+    }
+}
