@@ -149,6 +149,9 @@ private:
     TrustStore& store_;
     ServerObserver& observer_;
     std::unique_ptr<Impl> impl_;
+    // Guards impl_'s lifetime against post() from other threads (backend
+    // callbacks racing with stop()): post never touches a dying Impl.
+    std::mutex life_mu_;
     std::thread thread_;
     std::atomic<bool> running_{false};
     uint16_t port_ = 0;

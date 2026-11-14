@@ -684,7 +684,10 @@ bool Server::start(std::string* err) {
         if (err) *err = "network init failed";
         return false;
     }
-    impl_ = std::make_unique<Impl>(*this);
+    {
+        std::lock_guard<std::mutex> lk(life_mu_);
+        impl_ = std::make_unique<Impl>(*this);
+    }
     if (!impl_->waker.ok()) {
         if (err) *err = "cannot create wake socket";
         impl_.reset();
@@ -707,7 +710,7 @@ bool Server::start(std::string* err) {
 
 void Server::stop() {
     if (!impl_) return;
-    backend_.stop();
+    backend_.stop();  // no new OS callbacks after this
     {
         std::lock_guard<std::mutex> lk(impl_->icon_mu);
         impl_->icon_stop = true;
@@ -718,12 +721,18 @@ void Server::stop() {
     impl_->waker.wake();
     if (thread_.joinable()) thread_.join();
     net::close_socket(impl_->listener);
-    impl_.reset();
+    std::unique_ptr<Impl> dying;
+    {
+        std::lock_guard<std::mutex> lk(life_mu_);
+        dying = std::move(impl_);  // from here post() sees no Impl and drops the task
+    }
+    dying.reset();  // queued tasks are destroyed with it (never leaked)
 }
 
 void Server::post(std::function<void()> fn) {
+    std::lock_guard<std::mutex> life(life_mu_);
     Impl* impl = impl_.get();
-    if (!impl) return;
+    if (!impl || !running_.load()) return;
     {
         std::lock_guard<std::mutex> lk(impl->tasks_mu);
         impl->tasks.push_back(std::move(fn));

@@ -54,7 +54,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      # ubuntu runners ship the Android SDK (ANDROID_HOME) with accepted licenses;
+      # Gradle installs the pinned NDK/CMake on demand.
       - name: Build APK and render screenshots
         run: ./gradlew assembleDebug assembleRelease testDebugUnitTest --console=plain
         env:

@@ -88,32 +88,10 @@ struct Radar: View {
 
     var body: some View {
         GeometryReader { g in
-            let c = CGPoint(x: g.size.width / 2, y: 150)
             ZStack {
-                Circle().stroke(Archon.track, lineWidth: 1).frame(width: 140, height: 140).position(c)
-                Circle().stroke(Archon.track, lineWidth: 1).frame(width: 260, height: 260).position(c)
-                if pulse > 0 {
-                    Circle().stroke(Archon.accent.opacity(1 - pulse), lineWidth: 1)
-                        .frame(width: 260 * pulse, height: 260 * pulse).position(c)
-                }
-                Image(systemName: "iphone").font(.system(size: 22, weight: .light)).foregroundStyle(Archon.paper).position(c)
+                RadarRings(center: CGPoint(x: g.size.width / 2, y: 150), pulse: pulse)
                 ForEach(rows) { row in
-                    let r: CGFloat = row.paired && row.online ? 70 : 130
-                    let a = Double(abs(row.angleSeed % 360)) * .pi / 180
-                    let p = CGPoint(x: c.x + r * cos(a), y: c.y + r * sin(a))
-                    // Dot sits exactly on the orbit; the name hangs toward the centre.
-                    let labelLeft = p.x > c.x
-                    Button { pick(row) } label: {
-                        HStack(spacing: 6) {
-                            if labelLeft { name(row); Dot(color: statusColor(row)) }
-                            else { Dot(color: statusColor(row)); name(row) }
-                        }
-                        .frame(width: 140, alignment: labelLeft ? .trailing : .leading)
-                    }
-                    .buttonStyle(.plain)
-                    .position(x: labelLeft ? p.x + 4 - 70 : p.x - 4 + 70, y: p.y)
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
-                    .accessibilityHidden(true)
+                    RadarPoint(row: row, center: CGPoint(x: g.size.width / 2, y: 150), pick: pick)
                 }
             }
             .animation(reduce ? nil : Motion.ui, value: rows)
@@ -122,11 +100,6 @@ struct Radar: View {
         .onChange(of: searching) { _ in runPulse() }
         .onChange(of: rows.count) { _ in runPulse() }
         .onAppear { runPulse() }
-    }
-
-    private func name(_ row: PCRow) -> some View {
-        Text(row.target.name).font(.archonCaption)
-            .foregroundStyle(row.online ? Archon.paper : Archon.muted).lineLimit(1).truncationMode(.tail)
     }
 
     /// The pulse plays twice while searching, then rests (nothing loops forever).
@@ -184,5 +157,70 @@ struct PCRowView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(row.target.name), \(statusText(row))")
+    }
+}
+
+/// Orbits, the searching pulse and the phone glyph (split out so the Swift
+/// type-checker handles each piece quickly).
+private struct RadarRings: View {
+    let center: CGPoint
+    let pulse: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Archon.track, lineWidth: 1).frame(width: 140, height: 140).position(center)
+            Circle().stroke(Archon.track, lineWidth: 1).frame(width: 260, height: 260).position(center)
+            if pulse > 0 {
+                Circle().stroke(Archon.accent.opacity(Double(1 - pulse)), lineWidth: 1)
+                    .frame(width: 260 * pulse, height: 260 * pulse)
+                    .position(center)
+            }
+            Image(systemName: "iphone").font(.system(size: 22, weight: .light))
+                .foregroundStyle(Archon.paper).position(center)
+        }
+    }
+}
+
+/// One PC on the radar: the dot sits exactly on its orbit, the name hangs toward the centre.
+private struct RadarPoint: View {
+    let row: PCRow
+    let center: CGPoint
+    let pick: (PCRow) -> Void
+
+    private var point: CGPoint {
+        let radius: CGFloat = (row.paired && row.online) ? 70 : 130
+        let degrees = Double(((row.angleSeed % 360) + 360) % 360)  // abs(Int.min) would trap
+        let radians = degrees * Double.pi / 180
+        let dx = radius * CGFloat(cos(radians))
+        let dy = radius * CGFloat(sin(radians))
+        return CGPoint(x: center.x + dx, y: center.y + dy)
+    }
+
+    var body: some View {
+        let p = point
+        let labelLeft = p.x > center.x
+        let x: CGFloat = labelLeft ? p.x + 4 - 70 : p.x - 4 + 70
+        return Button { pick(row) } label: {
+            HStack(spacing: 6) {
+                if labelLeft {
+                    label
+                    Dot(color: statusColor(row))
+                } else {
+                    Dot(color: statusColor(row))
+                    label
+                }
+            }
+            .frame(width: 140, alignment: labelLeft ? .trailing : .leading)
+        }
+        .buttonStyle(.plain)
+        .position(x: x, y: p.y)
+        .transition(.scale(scale: 0.6).combined(with: .opacity))
+        .accessibilityHidden(true)
+    }
+
+    private var label: some View {
+        Text(row.target.name).font(.archonCaption)
+            .foregroundStyle(row.online ? Archon.paper : Archon.muted)
+            .lineLimit(1).truncationMode(.tail)
     }
 }
