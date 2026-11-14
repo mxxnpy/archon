@@ -66,6 +66,21 @@ TEST(model_messages_roundtrip) {
     EndpointInfo de;
     REQUIRE(decode_endpoint(r, de));
     CHECK(de == e);
+    CHECK(de.battery == -1);
+    // 1.6: battery of a wireless device; a 1.5 agent sends no byte (unknown).
+    for (int level : {0, 37, 100}) {
+        EndpointInfo bt = e;
+        bt.battery = int8_t(level);
+        Bytes bb = encode_endpoint(bt);
+        Reader rb = body(bb);
+        EndpointInfo db;
+        REQUIRE(decode_endpoint(rb, db));
+        CHECK(db.battery == level);
+        bb.pop_back();
+        Reader old = body(bb);
+        REQUIRE(decode_endpoint(old, db));
+        CHECK(db.battery == -1);
+    }
 
     SourceInfo s;
     s.id = "ep|1234";

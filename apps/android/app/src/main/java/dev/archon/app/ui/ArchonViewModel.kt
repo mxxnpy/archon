@@ -33,7 +33,11 @@ data class Endpoint(
     val id: String, val name: String, val volume: Int, val muted: Boolean, val isDefault: Boolean, val meter: Int = 0,
     val input: Boolean = false,           // microphone
     val isDefaultInput: Boolean = false,  // the PC's default microphone
-)
+    val battery: Int = -1,                // wireless device battery 0..100 (-1 = none)
+) {
+    /** "Fone Bluetooth · 80%" when the device reports a battery. */
+    val label: String get() = if (battery >= 0) "$name · $battery%" else name
+}
 data class Source(
     val id: String, val endpointId: String, val name: String, val iconKey: String, val volume: Int,
     val muted: Boolean, val playing: Boolean, val system: Boolean, val meter: Int = 0,
@@ -323,7 +327,7 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
             CoreEvent.STATE_SYNCED -> _link.update { it.copy(synced = true) }
             CoreEvent.ENDPOINT -> _link.update {
                 it.copy(endpoints = it.endpoints + (e.id to Endpoint(e.id, e.name, e.volume, e.muted, e.isDefault, e.meter,
-                    e.input, e.isDefaultInput)))
+                    e.input, e.isDefaultInput, battery = e.battery)))
             }
             CoreEvent.ENDPOINT_REMOVED -> _link.update { it.copy(endpoints = it.endpoints - e.id) }
             CoreEvent.SOURCE -> {

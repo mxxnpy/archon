@@ -235,7 +235,7 @@ Volumes are `u16` in **0..10000** (0.00 % – 100.00 %). Ids are opaque strings
 | Type | Name | Body |
 | --- | --- | --- |
 | `0x40` | STATE_RESET | — controller clears its model |
-| `0x41` | ENDPOINT | `str id`, `str name` (≤ 256 B), `u8 flags` (bit0 default output, bit1 muted, bit2 input device, bit3 default input), `u16 volume`, `u16 meter_slot` — insert or replace |
+| `0x41` | ENDPOINT | `str id`, `str name` (≤ 256 B), `u8 flags` (bit0 default output, bit1 muted, bit2 input device, bit3 default input), `u16 volume`, `u16 meter_slot`, `u8 battery` (1.6: 0 = no battery / unknown, 1..101 = 0..100 % of a wireless device) — insert or replace |
 | `0x42` | ENDPOINT_REMOVED | `str id` |
 | `0x43` | SOURCE | `str id`, `str endpoint_id`, `str name` (≤ 256 B), `str icon_key` (≤ 128 B, empty = none), `u32 pid`, `u8 flags` (bit0 muted, bit1 playing now, bit2 system sounds, bit3 browser tab — 1.4), `u16 volume`, `u16 meter_slot`, `str route` (≤ 512 B; the output this app is pinned to, empty = follows the default; 1.2), `str group` (≤ 64 B; tab: browser name), `str detail` (≤ 256 B; tab: site) (1.4) — insert or replace |
 | `0x44` | SOURCE_REMOVED | `str id` |
@@ -393,6 +393,15 @@ starts while a profile is in force gets that profile's setting once. With
 profile changed, except what the user changed since. A profile never unmutes
 anything during a panic mute. A device whose id changed is found again by its
 name when that name is unique.
+
+### Wireless battery (added in 1.6, backward compatible)
+
+ENDPOINT carries the battery of a wireless output or microphone (Bluetooth
+headphones, speakers, headsets) when the operating system reports one, as one
+trailing byte: 0 = none or unknown, 1..101 = 0..100 %. The agent re-reads it
+when devices change and about once a minute and sends a new ENDPOINT when it
+changes. Older agents send no byte (unknown); older controllers ignore it.
+Controllers show it next to the device name ("Fone Bluetooth · 80%").
 
 ### Level meters (added in 1.1, backward compatible)
 

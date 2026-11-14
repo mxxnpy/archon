@@ -556,7 +556,7 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
                         .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(endpoint?.name ?: target.name, style = Type.Caption, color = Archon.Paper,
+                    Text(endpoint?.label ?: target.name, style = Type.Caption, color = Archon.Paper,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     if (outputs.size > 1) {
                         Spacer(Modifier.width(4.dp))
@@ -569,7 +569,7 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
                     outputs.forEach { e ->
                             DropdownMenuItem(
                                 text = {
-                                    Text(e.name + if (e.isDefault) "  ·  " + stringResource(R.string.default_device) else "",
+                                    Text(e.label + if (e.isDefault) "  ·  " + stringResource(R.string.default_device) else "",
                                         style = Type.Caption, color = if (e.id == endpoint?.id) Archon.Accent else Archon.Paper)
                                 },
                                 onClick = { vm.selectEndpoint(e.id); devices = false },

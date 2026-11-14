@@ -57,6 +57,7 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
                 systemSounds = flags and 8 != 0, meter = meter, data = data,
                 input = flags and 16 != 0, isDefaultInput = flags and 32 != 0, panic = flags and 64 != 0,
                 active = flags and 128 != 0,
+                battery = ((flags shr 16) and 0xFF) - 1,
                 route = route.s(), features = features,
                 tab = flags and 256 != 0, group = group.s(), detail = detail.s(),
             )
@@ -150,6 +151,7 @@ data class CoreEvent(
     // 1.4: a browser tab (SOURCE)
     val tab: Boolean = false, val group: String = "", val detail: String = "",
     val profile: dev.archon.app.ui.ProfileInfo? = null,  // 1.5 PROFILE
+    val battery: Int = -1,  // 1.6 ENDPOINT: wireless battery 0..100, -1 = none
 ) {
     companion object {
         const val STATUS = 0

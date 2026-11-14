@@ -42,7 +42,8 @@ final class CoreClient {
         var network = ""
         var nEndpoints = 0
         var nApps = 0
-    }
+        // 1.6
+        var battery = -1  // wireless output battery 0..100, -1 = none
 
     static let featureInputs = UInt32(ARC_FEATURE_INPUTS)
     static let featureRouting = UInt32(ARC_FEATURE_ROUTING)
@@ -162,6 +163,6 @@ final class CoreClient {
               active: e.active != 0, lost: e.lost != 0, seq: e.seq,
               tab: e.tab != 0, group: s(e.group), detail: s(e.detail),
               profileFlags: e.profile_flags, days: e.days, startMin: Int(e.start_min), endMin: Int(e.end_min),
-              network: s(e.network), nEndpoints: Int(e.n_endpoints), nApps: Int(e.n_apps))
+              network: s(e.network), nEndpoints: Int(e.n_endpoints), nApps: Int(e.n_apps), battery: Int(e.battery))
     }
 }

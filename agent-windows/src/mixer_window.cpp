@@ -329,7 +329,8 @@ void MixerWindow::layout() {
         p.kind = Widget::Kind::OutputPill;
         p.key = "output";
         p.name = pt_ ? L"Dispositivo de saída" : L"Output device";
-        p.sub = out ? wstr(out->name) : (pt_ ? L"Sem saída de som" : L"No output");
+        p.sub = out ? wstr(out->name) + (out->battery >= 0 ? L" \x00B7 " + std::to_wstring(out->battery) + L"%" : L"")
+                    : (pt_ ? L"Sem saída de som" : L"No output");
         p.r = D2D1::RectF(kPad, 12, kPad + std::min(320.f, std::max(160.f, W * 0.34f)), 52);
         p.glyph = kGlyphChevron;
         p.invoke = [this] {
@@ -627,7 +628,7 @@ void MixerWindow::layout_panel(float x0, float y0, float w, float h) {
         t.name = std::move(name);
         t.sub = std::move(sub);
         t.on = on;
-        t.r = D2D1::RectF(l, y, r, y + (t.sub.empty() ? 44.f : 52.f));
+        t.r = D2D1::RectF(l, y, r, y + (t.sub.empty() ? 44.f : 64.f));  // help text may take two lines
         t.invoke = std::move(fn);
         y += t.r.bottom - t.r.top + 4;
         add(t);
@@ -845,6 +846,13 @@ void MixerWindow::layout_panel(float x0, float y0, float w, float h) {
         toggle("s:autostart", pt_ ? L"Iniciar com o Windows" : L"Start with Windows", L"",
                host_.autostart && host_.autostart(), [this] {
                    if (host_.set_autostart && host_.autostart) host_.set_autostart(!host_.autostart());
+                   invalidate();
+               });
+        toggle("s:hud", pt_ ? L"Aviso na tela" : L"On-screen notice",
+               pt_ ? L"Quando o celular muda o som. Nunca aparece sobre jogos ou vídeos em tela cheia."
+                   : L"When a phone changes the sound. Never over full-screen games or videos.",
+               host_.hud && host_.hud(), [this] {
+                   if (host_.set_hud && host_.hud) host_.set_hud(!host_.hud());
                    invalidate();
                });
         text("s:ext", pt_ ? L"Extensão do navegador" : L"Browser extension", 26, true);
@@ -1192,7 +1200,9 @@ void MixerWindow::draw_widget(const Widget& w) {
             draw_text(w.name, D2D1::RectF(r.left, r.top + (w.sub.empty() ? 0.f : 4.f), r.right - 64,
                                           w.sub.empty() ? r.bottom : r.top + 28),
                       f_body_.Get(), kPaper);
-            if (!w.sub.empty()) draw_text(w.sub, D2D1::RectF(r.left, r.top + 28, r.right - 64, r.bottom - 2), f_small_.Get(), kMuted);
+            if (!w.sub.empty())
+                draw_text(w.sub, D2D1::RectF(r.left, r.top + 28, r.right - 64, r.bottom - 2), f_small_.Get(), kMuted,
+                          DWRITE_TEXT_ALIGNMENT_LEADING, true);
             const float cy = (r.top + r.bottom) / 2;
             const D2D1_RECT_F tr = D2D1::RectF(r.right - 52, cy - 14, r.right, cy + 14);
             round_fill(tr, 14, w.on ? kAccent : kTrack);
@@ -1566,6 +1576,7 @@ void MixerWindow::output_menu(POINT screen) {
     HMENU m = CreatePopupMenu();
     for (size_t i = 0; i < outs.size(); ++i) {
         std::wstring label = wstr(outs[i]->name);
+        if (outs[i]->battery >= 0) label += L" \x00B7 " + std::to_wstring(outs[i]->battery) + L"%";
         if (outs[i]->is_default) label += pt_ ? L"  \x00B7  padrão" : L"  \x00B7  default";
         AppendMenuW(m, MF_STRING | (outs[i] == cur ? MF_CHECKED : 0), UINT(i + 1), label.c_str());
     }

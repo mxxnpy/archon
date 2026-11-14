@@ -148,6 +148,20 @@ It sees exactly what a paired phone sees (through the agent's local view).
   Automation / NSAccessibility / ATK) with name, role, value (volume %) and
   state (muted, selected); reduce motion follows the system setting.
 
+### On-screen notice (HUD, desktop agents)
+
+When a phone changes the PC's sound, the PC shows what changed for 1.6 s: a
+340 × 76 `surface` card (radius 24, 1 px `track` edge), at the bottom centre
+of the screen the pointer is on, 48 px above the taskbar. Left: a 38 px ring
+with the new volume (`accent`, `edge` when muted) or a dot (`accent` for a
+profile, `error` for "Tudo silenciado"). Right: what (body `paper`) and who ·
+value (caption `muted`). It fades out over 160 ms (none with reduce motion).
+
+It must never get in the way: it is click-through and never takes focus, and
+it does not appear at all while a full-screen game, video or presentation is
+in front (Windows' "busy" state, or the foreground window covering its
+monitor). It can be turned off in Configurações ("Aviso na tela").
+
 ## Motion
 
 | Element | Motion | Duration / easing | Reduce Motion |

@@ -122,7 +122,7 @@ class ScreenshotTest {
             status = LinkStatus.CONNECTED, synced = true,
             endpoints = mapOf(
                 "e1" to Endpoint("e1", "SteelSeries Sonar - Gaming", 6400, false, true, 1),
-                "e2" to Endpoint("e2", "Fone Bluetooth", 5000, false, false, 7),
+                "e2" to Endpoint("e2", "Fone Bluetooth", 5000, false, false, 7, battery = 80),
                 "m1" to Endpoint("m1", "Microfone (USB)", 7500, false, false, 8, input = true, isDefaultInput = true),
             ),
             features = NativeClient.FEATURE_INPUTS or NativeClient.FEATURE_ROUTING or NativeClient.FEATURE_PANIC,

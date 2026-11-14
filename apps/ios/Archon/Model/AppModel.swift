@@ -18,7 +18,9 @@ struct Endpoint: Identifiable, Equatable {
     var meter: Int
     var input = false           // microphone
     var isDefaultInput = false  // the PC's default microphone
-}
+    var battery = -1            // wireless device battery 0..100 (-1 = none)
+    /// "Fone Bluetooth · 80 %" when the device reports a battery.
+    var label: String { battery >= 0 ? "\(name) · \(battery)%" : name }
 
 struct Source: Identifiable, Equatable {
     let id: String
@@ -179,7 +181,7 @@ final class AppModel: ObservableObject {
         func mixer() {
             endpoints = [
                 "e1": Endpoint(id: "e1", name: "SteelSeries Sonar - Gaming", volume: 6400, muted: false, isDefault: true, meter: 1),
-                "e2": Endpoint(id: "e2", name: "Fone Bluetooth", volume: 5000, muted: false, isDefault: false, meter: 7),
+                "e2": Endpoint(id: "e2", name: "Fone Bluetooth", volume: 5000, muted: false, isDefault: false, meter: 7, battery: 80),
                 "m1": Endpoint(id: "m1", name: "Microfone (USB)", volume: 7500, muted: false, isDefault: false, meter: 8,
                                input: true, isDefaultInput: true),
             ]
@@ -505,7 +507,7 @@ final class AppModel: ObservableObject {
             synced = true
         case ARC_EV_ENDPOINT:
             endpoints[e.id] = Endpoint(id: e.id, name: e.name, volume: e.volume, muted: e.muted, isDefault: e.isDefault,
-                                       meter: Int(e.meter), input: e.input, isDefaultInput: e.isDefaultInput)
+                                       meter: Int(e.meter), input: e.input, isDefaultInput: e.isDefaultInput, battery: e.battery)
         case ARC_EV_ENDPOINT_REMOVED:
             endpoints[e.id] = nil
         case ARC_EV_SOURCE:

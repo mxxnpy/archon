@@ -115,6 +115,8 @@ typedef struct {
     const char* network;      /* PROFILE: network it waits for ("" = any); CONTEXT: the PC's network */
     uint16_t n_endpoints;     /* PROFILE */
     uint16_t n_apps;          /* PROFILE */
+    /* 1.6 */
+    int8_t battery;           /* ENDPOINT: wireless device battery 0..100 %, -1 = none / unknown */
 } arc_event;
 
 #define ARC_FEATURE_INPUTS 1u

@@ -21,7 +21,7 @@ struct Case {
     Bytes body;       // message body (after the type byte)
     Decoder decode;
     bool tolerant;    // Endpoint/Source/AgentInfo: trailing bytes allowed (later versions append)
-    size_t optional_tail = 0;  // bytes at the end older agents don't send (meter 1.1, route 1.2, group+detail 1.4)
+    size_t optional_tail = 0;  // bytes at the end older agents don't send (meter 1.1, route 1.2, group+detail 1.4, battery 1.6)
 };
 
 bool run_exact(const Bytes& b, const Decoder& d) {
@@ -67,7 +67,7 @@ std::vector<Case> cases() {
     v.push_back({"icon", body_of(encode_icon("k", png.data(), png.size())),
                  [](Reader& r) { std::string k; Bytes p; return decode_icon(r, k, p); }, false});
     EndpointInfo e{"E", "Speakers", 100, true, false, 3};
-    v.push_back({"endpoint", body_of(encode_endpoint(e)), [](Reader& r) { EndpointInfo x; return decode_endpoint(r, x); }, true, 2});
+    v.push_back({"endpoint", body_of(encode_endpoint(e)), [](Reader& r) { EndpointInfo x; return decode_endpoint(r, x); }, true, 3});
     SourceInfo s;
     s.id = "S";
     s.endpoint_id = "E";

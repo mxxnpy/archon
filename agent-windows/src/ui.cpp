@@ -23,6 +23,7 @@ constexpr UINT WM_APP_PAIR_DONE = WM_APP + 3;
 constexpr UINT WM_APP_CONTROLLERS = WM_APP + 4;
 constexpr UINT WM_APP_PANIC = WM_APP + 5;
 constexpr UINT WM_APP_STREAMS = WM_APP + 6;
+constexpr UINT WM_APP_REMOTE = WM_APP + 7;
 constexpr int kPanicHotkey = 1;  // Ctrl+Alt+M
 constexpr UINT kTrayId = 1;
 
@@ -266,7 +267,15 @@ void AgentUi::attach(arc::Server* server, arc::TrustStore* store, uint16_t port,
         ShellExecuteW(nullptr, L"open", log.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     };
     host.hotkey = hotkey_ok_;
+    host.hud = [this] { return hud_on_; };
+    host.set_hud = [this](bool on) {
+        hud_on_ = on;
+        hud_.set_enabled(on);
+        save_setting("hud", on ? "1" : "0");
+    };
     window_.create(inst_, server_, std::move(host));
+    hud_.create(inst_);
+    hud_.set_enabled(hud_on_);
     if (first_run_) balloon(T().first_title, T().first_text);
 }
 
@@ -283,6 +292,7 @@ int AgentUi::run() {
 
 void AgentUi::destroy() {
     window_.destroy();
+    hud_.destroy();
     NOTIFYICONDATAW nid{sizeof nid};
     nid.hWnd = main_;
     nid.uID = kTrayId;
@@ -326,6 +336,11 @@ void AgentUi::on_pairing_lockout(int lockouts, int64_t locked_until_unix) { save
 void AgentUi::on_panic_changed(bool active) { PostMessageW(main_, WM_APP_PANIC, active ? 1 : 0, 0); }
 
 void AgentUi::on_streams_changed(size_t active) { PostMessageW(main_, WM_APP_STREAMS, WPARAM(active), 0); }
+
+void AgentUi::on_remote_change(const RemoteChange& change) {
+    auto* copy = new RemoteChange(change);
+    if (!PostMessageW(main_, WM_APP_REMOTE, 0, LPARAM(copy))) delete copy;
+}
 
 // ---- tray ---------------------------------------------------------------------
 
@@ -441,6 +456,11 @@ LRESULT AgentUi::handle_main(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_HOTKEY:
             if (w == kPanicHotkey && server_) server_->panic_toggle();
             return 0;
+        case WM_APP_REMOTE: {
+            std::unique_ptr<RemoteChange> c(reinterpret_cast<RemoteChange*>(l));
+            hud_.show(*c);  // skipped while a full-screen app is in front
+            return 0;
+        }
         case WM_APP_STREAMS:
             streams_ = size_t(w);
             window_.set_streams(streams_);

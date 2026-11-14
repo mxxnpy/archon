@@ -814,6 +814,36 @@ struct Server::Impl {
         }
     }
 
+    // Tells the PC (on-screen notice) what a phone changed. Not for the local window.
+    void remote_change(const Conn& c, ServerObserver::RemoteChange ch) {
+        if (c.local) return;
+        ch.controller = c.name;
+        s.observer_.on_remote_change(ch);
+    }
+    void remote_endpoint(const Conn& c, const std::string& id, bool mute, uint16_t vol, bool muted) {
+        auto it = endpoints.find(id);
+        if (it == endpoints.end()) return;
+        ServerObserver::RemoteChange ch;
+        ch.kind = mute ? ServerObserver::RemoteChange::Kind::Mute : ServerObserver::RemoteChange::Kind::Volume;
+        ch.target = it->second.name;
+        ch.device = true;
+        ch.input = it->second.input;
+        ch.volume = mute ? it->second.volume : vol;
+        ch.on = mute ? muted : it->second.muted;
+        remote_change(c, ch);
+    }
+    void remote_source(const Conn& c, const std::string& id, bool mute, uint16_t vol, bool muted) {
+        auto it = sources.find(id);
+        if (it == sources.end()) return;
+        ServerObserver::RemoteChange ch;
+        ch.kind = mute ? ServerObserver::RemoteChange::Kind::Mute : ServerObserver::RemoteChange::Kind::Volume;
+        ch.target = it->second.name;
+        ch.system = it->second.system_sounds;
+        ch.volume = mute ? it->second.volume : vol;
+        ch.on = mute ? muted : it->second.muted;
+        remote_change(c, ch);
+    }
+
     void on_app(Conn& c, const Bytes& msg) {
         Reader r(msg.data() + 1, msg.size() - 1);
         std::string id;
@@ -825,16 +855,28 @@ struct Server::Impl {
                 send_dump(c);
                 return;
             case MsgType::SetEndpointVolume:
-                if (decode_set_volume(r, id, vol)) s.backend_.set_endpoint_volume(id, vol);
+                if (decode_set_volume(r, id, vol)) {
+                    s.backend_.set_endpoint_volume(id, vol);
+                    remote_endpoint(c, id, false, vol, false);
+                }
                 return;
             case MsgType::SetEndpointMute:
-                if (decode_set_mute(r, id, muted)) request_mute(id, muted);
+                if (decode_set_mute(r, id, muted)) {
+                    request_mute(id, muted);
+                    remote_endpoint(c, id, true, 0, muted);
+                }
                 return;
             case MsgType::SetSourceVolume:
-                if (decode_set_volume(r, id, vol)) s.backend_.set_source_volume(id, vol);
+                if (decode_set_volume(r, id, vol)) {
+                    s.backend_.set_source_volume(id, vol);
+                    remote_source(c, id, false, vol, false);
+                }
                 return;
             case MsgType::SetSourceMute:
-                if (decode_set_mute(r, id, muted)) s.backend_.set_source_mute(id, muted);
+                if (decode_set_mute(r, id, muted)) {
+                    s.backend_.set_source_mute(id, muted);
+                    remote_source(c, id, true, 0, muted);
+                }
                 return;
             case MsgType::GetIcon:
                 if (decode_id(r, id, kMaxIconKey)) request_icon(c.id, id);
@@ -862,7 +904,12 @@ struct Server::Impl {
             }
             case MsgType::PanicMute: {
                 bool on = false;
-                if (decode_flag(r, on)) set_panic(on);
+                if (!decode_flag(r, on)) return;
+                set_panic(on);
+                ServerObserver::RemoteChange ch;
+                ch.kind = ServerObserver::RemoteChange::Kind::Panic;
+                ch.on = on;
+                remote_change(c, ch);
                 return;
             }
             case MsgType::StreamStart: {
@@ -881,7 +928,13 @@ struct Server::Impl {
                 return;
             case MsgType::ApplyProfile:
                 if (decode_id(r, id, kMaxId))
-                    if (const Profile* p = find_profile(id)) apply_profile(*p, false);  // by hand: nothing to restore later
+                    if (const Profile* p = find_profile(id)) {
+                        apply_profile(*p, false);  // by hand: nothing to restore later
+                        ServerObserver::RemoteChange ch;
+                        ch.kind = ServerObserver::RemoteChange::Kind::Profile;
+                        ch.target = p->name;
+                        remote_change(c, ch);
+                    }
                 return;
             default:
                 return;  // unknown: ignore (forward compatibility)

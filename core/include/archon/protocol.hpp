@@ -109,10 +109,11 @@ struct EndpointInfo {
     uint16_t meter = 0;  // level-meter slot assigned by the server (0 = none)
     bool input = false;             // microphone / capture device (1.2)
     bool is_default_input = false;  // the default microphone (1.2)
+    int8_t battery = -1;            // 1.6: battery of a wireless device, 0..100 %; -1 = none / unknown
     bool operator==(const EndpointInfo& o) const {
         return id == o.id && name == o.name && volume == o.volume && muted == o.muted &&
                is_default == o.is_default && meter == o.meter && input == o.input &&
-               is_default_input == o.is_default_input;
+               is_default_input == o.is_default_input && battery == o.battery;
     }
     bool operator!=(const EndpointInfo& o) const { return !(*this == o); }
 };

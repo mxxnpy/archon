@@ -97,6 +97,19 @@ public:
     virtual void on_panic_changed(bool /*active*/) {}
     // 1.3: a phone started/stopped listening (count of active streams).
     virtual void on_streams_changed(size_t /*active*/) {}
+    // 1.6: a phone changed the sound (volume, mute, panic, a profile). For an
+    // on-screen notice on the PC; not called for the agent's own window.
+    struct RemoteChange {
+        enum class Kind { Volume, Mute, Panic, Profile } kind = Kind::Volume;
+        std::string controller;  // phone name
+        std::string target;      // device / app / profile name ("" for panic)
+        bool device = false;     // target is an output or microphone (not an app)
+        bool input = false;      // a microphone
+        bool system = false;     // system sounds
+        uint16_t volume = 0;
+        bool on = false;         // muted / panic on
+    };
+    virtual void on_remote_change(const RemoteChange& /*change*/) {}
 };
 
 struct ServerConfig {

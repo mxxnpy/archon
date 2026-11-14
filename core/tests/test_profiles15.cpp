@@ -210,11 +210,26 @@ ClientTiming quick() {
     return t;
 }
 
+// Records what phones changed (the PC's on-screen notice).
+class RecObs : public ServerObserver {
+public:
+    std::mutex mu;
+    std::vector<RemoteChange> changes;
+    void on_remote_change(const RemoteChange& c) override {
+        std::lock_guard<std::mutex> lk(mu);
+        changes.push_back(c);
+    }
+    size_t count() {
+        std::lock_guard<std::mutex> lk(mu);
+        return changes.size();
+    }
+};
+
 struct Rig {
     Backend be;
     Store store;
     Profiles saved;
-    ServerObserver obs;
+    RecObs obs;
     ServerConfig cfg;
     std::unique_ptr<Server> srv;
     bool started = false;
@@ -628,4 +643,41 @@ TEST(local_window_sees_the_mixer_and_controls_it) {
     std::lock_guard<std::mutex> lk(v.mu);
     CHECK(!v.bad);
     CHECK(v.eps.size() == eps_after && v.eps["OUT1"].volume != 999);
+}
+
+// 1.6: what a phone changes is reported for the PC's on-screen notice; the PC's own window is not.
+TEST(remote_changes_are_reported_for_the_pc_notice) {
+    Rig rig;
+    REQUIRE(rig.started);
+    Phone ph(rig);
+    REQUIRE(eventually([&] { return ph.l.live(); }));
+    using K = ServerObserver::RemoteChange::Kind;
+    ph.c.set_source_volume("S1", 4000);
+    REQUIRE(eventually([&] { return rig.obs.count() >= 1; }));
+    {
+        std::lock_guard<std::mutex> lk(rig.obs.mu);
+        const auto& c = rig.obs.changes.back();
+        CHECK(c.kind == K::Volume && c.target == "Spotify" && c.volume == 4000 && c.controller == "phone" && !c.device);
+    }
+    ph.c.set_endpoint_mute("OUT1", true);
+    REQUIRE(eventually([&] { return rig.obs.count() >= 2; }));
+    {
+        std::lock_guard<std::mutex> lk(rig.obs.mu);
+        const auto& c = rig.obs.changes.back();
+        CHECK(c.kind == K::Mute && c.on && c.device && c.target == "Speakers");
+    }
+    ph.c.panic_mute(true);
+    REQUIRE(eventually([&] { return rig.obs.count() >= 3; }));
+    {
+        std::lock_guard<std::mutex> lk(rig.obs.mu);
+        CHECK(rig.obs.changes.back().kind == K::Panic && rig.obs.changes.back().on);
+    }
+    // The agent's own window changes things too, but that is no news to the PC.
+    View v;
+    rig.srv->attach_local(&v);
+    rig.srv->local_command(encode_set_volume(MsgType::SetSourceVolume, "S2", 1000));
+    CHECK(eventually([&] { return rig.be.src("S2").volume == 1000; }));
+    std::this_thread::sleep_for(50ms);
+    CHECK(rig.obs.count() == 3);
+    rig.srv->attach_local(nullptr);
 }

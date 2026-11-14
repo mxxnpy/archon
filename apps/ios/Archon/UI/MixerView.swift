@@ -92,12 +92,12 @@ struct MixerView: View {
             Menu {
                 ForEach(model.outputs) { e in
                     Button { model.selectedEndpoint = e.id } label: {
-                        if e.id == model.currentEndpoint?.id { Label(e.name, systemImage: "checkmark") } else { Text(e.name) }
+                        if e.id == model.currentEndpoint?.id { Label(e.label, systemImage: "checkmark") } else { Text(e.label) }
                     }
                 }
             } label: {
                 HStack(spacing: 4) {
-                    Text(model.currentEndpoint?.name ?? target.name).font(.archonCaption).foregroundStyle(Archon.paper)
+                    Text(model.currentEndpoint?.label ?? target.name).font(.archonCaption).foregroundStyle(Archon.paper)
                         .lineLimit(1)
                     if model.outputs.count > 1 {
                         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Archon.muted)

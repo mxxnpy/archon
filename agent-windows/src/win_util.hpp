@@ -29,8 +29,11 @@ struct Config {
     bool first_run = false;
     int lockouts = 0;             // pairing lockout escalation (survives restarts)
     int64_t locked_until = 0;     // unix seconds
+    bool hud = true;              // on-screen notice when a phone changes the sound
 };
 void save_lockout(int lockouts, int64_t locked_until);
+// Replaces (or adds) one "key=value" line in agent.cfg, atomically.
+void save_setting(const std::string& key, const std::string& value);
 // Loads or creates %APPDATA%\Archon\agent.cfg.
 Config load_config();
 

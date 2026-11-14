@@ -11,11 +11,13 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <future>
 #include <set>
 
 #include "app_routing.hpp"
+#include "device_battery.hpp"
 #include "archon/crypto.hpp"
 #include "win_util.hpp"
 
@@ -136,6 +138,7 @@ struct EndpointEntry {
     std::string id;
     std::string name;
     bool input = false;  // capture device (microphone): no sessions
+    std::string container;  // physical device (battery lookup)
     ComPtr<IMMDevice> dev;
     ComPtr<IAudioEndpointVolume> vol;
     EndpointCallback* vol_cb = nullptr;
@@ -262,6 +265,8 @@ struct WasapiBackend::State {
     std::string default_input_id;
     std::map<DWORD, ProcInfo> procs;
     std::unique_ptr<AppRouting> routing;
+    std::map<std::string, int> batteries;  // container id -> 0..100
+    std::chrono::steady_clock::time_point batteries_at{};
 };
 
 WasapiBackend::WasapiBackend() { wake_ = CreateEventW(nullptr, FALSE, FALSE, nullptr); }
@@ -331,6 +336,8 @@ void WasapiBackend::run(std::promise<std::string>* started) {
     // Report the full current state before declaring success.
     refresh_devices();
     refresh_sessions();
+    st_->batteries = container_batteries();
+    st_->batteries_at = std::chrono::steady_clock::now();
     publish();
     started->set_value({});
 
@@ -348,9 +355,21 @@ void WasapiBackend::run(std::promise<std::string>* started) {
         }
         for (auto& t : tasks) t();
         bool changed = false;
+        bool devices_changed = false;
         if (devices_dirty_.exchange(false)) {
             refresh_devices();
             sessions_dirty_ = true;
+            devices_changed = true;
+        }
+        // Wireless batteries: when devices change and about once a minute (no notification exists).
+        const auto now = std::chrono::steady_clock::now();
+        if (devices_changed || now - st_->batteries_at > std::chrono::seconds(60)) {
+            st_->batteries_at = now;
+            auto b = container_batteries();
+            if (b != st_->batteries) {
+                st_->batteries = std::move(b);
+                changed = true;
+            }
         }
         if (sessions_dirty_.exchange(false)) {
             refresh_sessions();
@@ -400,6 +419,7 @@ void WasapiBackend::refresh_devices() {
             e.dev = dev;
             e.name = device_name(dev.Get());
             e.input = flow == eCapture;
+            e.container = endpoint_container(dev.Get());
             if (FAILED(dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, &e.vol))) continue;
             // Apps are listed per output; microphones only need volume, mute and a meter.
             if (!e.input && FAILED(dev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, &e.mgr)))
@@ -509,6 +529,8 @@ void WasapiBackend::publish() {
         e.vol->GetMute(&mute);
         info.volume = to_level(scalar);
         info.muted = mute != FALSE;
+        if (auto b = s.batteries.find(e.container); !e.container.empty() && b != s.batteries.end())
+            info.battery = int8_t(b->second);
         eps[eid] = info;
 
         for (auto& [key, se] : e.sessions) {

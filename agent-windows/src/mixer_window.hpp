@@ -32,6 +32,8 @@ struct WindowHost {
     std::function<void(bool)> set_autostart;
     std::function<int()> browsers;     // browsers connected through the extension (-1 = bridge off)
     std::function<void()> open_log;
+    std::function<bool()> hud;            // on-screen notice when a phone changes the sound
+    std::function<void(bool)> set_hud;
     bool hotkey = false;               // Ctrl+Alt+M registered
 };
 

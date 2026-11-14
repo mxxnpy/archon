@@ -146,6 +146,7 @@ Config load_config() {
         if (line.rfind("id=", 0) == 0) have_id = arc::from_hex(line.substr(3), cfg.agent_id.data(), 16);
         if (line.rfind("lockouts=", 0) == 0) cfg.lockouts = std::atoi(line.c_str() + 9);
         if (line.rfind("locked_until=", 0) == 0) cfg.locked_until = std::atoll(line.c_str() + 13);
+        if (line.rfind("hud=", 0) == 0) cfg.hud = line.c_str()[4] != '0';
         if (line.rfind("port=", 0) == 0) {
             int p = std::atoi(line.c_str() + 5);
             if (p > 0 && p < 65536) cfg.port = uint16_t(p);
@@ -195,6 +196,29 @@ void save_lockout(int lockouts, int64_t locked_until) {
     kept += "lockouts=" + std::to_string(lockouts) + "\nlocked_until=" + std::to_string(locked_until) + "\n";
     if (const DWORD e = write_file_atomic(path, kept))
         log_line("could not save the pairing lockout to agent.cfg (error " + std::to_string(e) + ")");
+}
+
+void save_setting(const std::string& key, const std::string& value) {
+    const std::wstring path = app_dir() + L"\\agent.cfg";
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        log_line("could not read agent.cfg; " + key + " not saved");
+        return;
+    }
+    std::string line, kept;
+    bool have_id = false;
+    while (std::getline(in, line)) {
+        if (line.rfind("id=", 0) == 0) have_id = true;
+        if (line.rfind(key + "=", 0) != 0) kept += line + "\n";
+    }
+    if (in.bad() || !have_id) {
+        log_line("agent.cfg unreadable; " + key + " not saved");
+        return;
+    }
+    in.close();
+    kept += key + "=" + value + "\n";
+    if (const DWORD e = write_file_atomic(path, kept))
+        log_line("could not save " + key + " to agent.cfg (error " + std::to_string(e) + ")");
 }
 
 static const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";

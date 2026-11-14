@@ -11,13 +11,15 @@
   src/network_watch.cpp
   src/mixer_window.cpp
   src/mixer_uia.cpp
+  src/device_battery.cpp
+  src/hud.cpp
   app.rc
 )
 set_target_properties(archon_agent PROPERTIES OUTPUT_NAME "Archon")
 target_link_libraries(archon_agent PRIVATE
   archon_core archon_agent_common ole32 oleaut32 uuid crypt32 dnsapi iphlpapi shell32 shlwapi
   comctl32 windowscodecs advapi32 user32 gdi32 version propsys gdiplus dwmapi secur32 runtimeobject bcrypt
-  d2d1 dwrite uiautomationcore)
+  d2d1 dwrite uiautomationcore setupapi)
 target_compile_definitions(archon_agent PRIVATE UNICODE _UNICODE)
 if(MSVC)
   target_compile_options(archon_agent PRIVATE /W4 /permissive- /utf-8)
@@ -54,7 +56,7 @@ endif()
 
 # The Archon window over a made-up mixer: screenshots and manual checks without
 # the real agent (--shot out.png [--panel ...] [--size WxH] [--focus N]).
-add_executable(archon_window_demo tests/window_demo.cpp src/mixer_window.cpp src/mixer_uia.cpp src/win_util.cpp)
+add_executable(archon_window_demo tests/window_demo.cpp src/mixer_window.cpp src/mixer_uia.cpp src/win_util.cpp src/hud.cpp)
 target_include_directories(archon_window_demo PRIVATE src)
 target_link_libraries(archon_window_demo PRIVATE archon_core archon_agent_common ole32 oleaut32 uuid crypt32 iphlpapi
   shell32 shlwapi comctl32 windowscodecs advapi32 user32 gdi32 version propsys secur32 dwmapi d2d1 dwrite
@@ -66,6 +68,16 @@ if(MSVC)
 endif()
 if(MSVC)
   target_compile_options(archon_window_demo PRIVATE /W4 /utf-8)
+endif()
+
+# Manual, read-only check of the battery Windows reports per audio device (1.6).
+add_executable(archon_battery_probe tests/battery_probe.cpp src/device_battery.cpp src/win_util.cpp)
+target_include_directories(archon_battery_probe PRIVATE src)
+target_link_libraries(archon_battery_probe PRIVATE archon_core ole32 oleaut32 uuid crypt32 iphlpapi shell32 shlwapi
+  windowscodecs advapi32 user32 gdi32 version propsys secur32 setupapi)
+target_compile_definitions(archon_battery_probe PRIVATE UNICODE _UNICODE)
+if(MSVC)
+  target_compile_options(archon_battery_probe PRIVATE /W4 /utf-8)
 endif()
 
 # Manual check of the network name the profiles see (1.5).
@@ -80,10 +92,10 @@ endif()
 
 # Manual end-to-end check against the real audio stack (not part of ctest:
 # needs an output device and changes/restores the system sounds volume).
-add_executable(archon_wasapi_e2e tests/wasapi_e2e.cpp src/wasapi_backend.cpp src/win_util.cpp src/app_routing.cpp
+add_executable(archon_wasapi_e2e tests/wasapi_e2e.cpp src/wasapi_backend.cpp src/win_util.cpp src/app_routing.cpp src/device_battery.cpp
   src/loopback_stream.cpp)
 target_link_libraries(archon_wasapi_e2e PRIVATE archon_core archon_agent_common ole32 oleaut32 uuid crypt32 iphlpapi shell32
-  shlwapi windowscodecs advapi32 user32 gdi32 version propsys secur32 runtimeobject)
+  shlwapi windowscodecs advapi32 user32 gdi32 version propsys secur32 runtimeobject setupapi)
 target_compile_definitions(archon_wasapi_e2e PRIVATE UNICODE _UNICODE)
 if(MSVC)
   target_compile_options(archon_wasapi_e2e PRIVATE /W4 /utf-8)

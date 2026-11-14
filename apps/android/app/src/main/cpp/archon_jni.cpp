@@ -78,7 +78,9 @@ void on_event(void* user, const arc_event* e) {
     env->PushLocalFrame(16);
     const jint flags = (e->muted ? 1 : 0) | (e->is_default ? 2 : 0) | (e->playing ? 4 : 0) | (e->system_sounds ? 8 : 0) |
                        (e->input ? 16 : 0) | (e->is_default_input ? 32 : 0) | (e->panic ? 64 : 0) |
-                       (e->active ? 128 : 0) | (e->tab ? 256 : 0);
+                       (e->active ? 128 : 0) | (e->tab ? 256 : 0) |
+                       // 1.6: battery + 1 in bits 16..23 (0 = none), no signature change
+                       ((e->battery >= 0 ? (e->battery + 1) & 0xFF : 0) << 16);
     env->CallVoidMethod(h->target, g_on_event, jint(e->type), jint(e->status), jint(e->error),
                         str(env, e->type == ARC_EV_CONTEXT ? e->network : e->message),
                         str(env, e->id), str(env, e->endpoint_id), str(env, e->name), str(env, e->icon_key),

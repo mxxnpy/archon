@@ -183,6 +183,7 @@ Bytes encode_endpoint(const EndpointInfo& e) {
                             (e.is_default_input ? 8 : 0));
     w.u8(uint8_t(MsgType::Endpoint)).str(e.id, kMaxId).str(e.name, kMaxDisplayName).u8(flags);
     w.u16(clamp_volume(e.volume)).u16(e.meter);
+    w.u8(e.battery < 0 ? 0 : uint8_t(std::min<int>(e.battery, 100) + 1));  // 1.6: 0 = unknown, 1..101 = 0..100 %
     return w.take();
 }
 
@@ -296,6 +297,11 @@ bool decode_endpoint(Reader& r, EndpointInfo& e) {
     e.input = flags & 4;             // 1.2
     e.is_default_input = flags & 8;  // 1.2
     e.meter = r.remaining() >= 2 ? r.u16() : 0;  // added in 1.1; absent from older agents
+    e.battery = -1;
+    if (r.remaining() >= 1) {  // 1.6
+        const uint8_t b = r.u8();
+        e.battery = b >= 1 && b <= 101 ? int8_t(b - 1) : int8_t(-1);
+    }
     return r.ok();
 }
 

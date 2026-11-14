@@ -17,6 +17,7 @@
 
 #include "archon/profiles.hpp"
 #include "archon/server.hpp"
+#include "hud.hpp"
 #include "mixer_window.hpp"
 #include "win_util.hpp"
 
@@ -45,6 +46,7 @@ public:
         };
         ep("e1", "Alto-falantes (Realtek Audio)", 6400, true);
         ep("e2", "Fone Bluetooth", 5000, false);
+        eps["e2"].battery = 80;
         ep("m1", "Microfone (USB)", 7500, true, true);
         auto src = [&](const char* id, const char* name, uint16_t v, bool playing, bool muted = false,
                        bool system = false, const char* route = "") {
@@ -206,6 +208,31 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--size" && i + 1 < argc) swscanf_s(argv[++i], L"%dx%d", &w, &h);
         else if (a == L"--focus" && i + 1 < argc) tabs = _wtoi(argv[++i]);
         else if (a == L"--hold" && i + 1 < argc) hold = _wtoi(argv[++i]);  // off-screen, for UI Automation checks
+        else if (a == L"--hud" && i + 1 < argc) {  // renders the on-screen notices into DIR, shows nothing
+            const std::wstring dir = argv[++i];
+            Hud hud;
+            if (!hud.create(GetModuleHandleW(nullptr))) return 1;
+            using K = arc::ServerObserver::RemoteChange::Kind;
+            arc::ServerObserver::RemoteChange c;
+            c.controller = "iPhone de Ayu";
+            c.kind = K::Volume;
+            c.target = "Spotify";
+            c.volume = 4000;
+            bool ok = hud.render_png(c, dir + L"\\hud-volume.png", 1.f);
+            c.kind = K::Mute;
+            c.target = "Discord";
+            c.on = true;
+            c.volume = 8000;
+            ok = hud.render_png(c, dir + L"\\hud-mute.png", 1.f) && ok;
+            c.kind = K::Panic;
+            c.target.clear();
+            ok = hud.render_png(c, dir + L"\\hud-panic.png", 1.f) && ok;
+            c.kind = K::Profile;
+            c.on = false;
+            c.target = "Noite";
+            ok = hud.render_png(c, dir + L"\\hud-profile.png", 1.5f) && ok;
+            return ok ? 0 : 1;
+        }
     }
     FakeMixer mixer;
     MemStore store;
@@ -267,6 +294,9 @@ int wmain(int argc, wchar_t** argv) {
     host.set_autostart = [](bool on) { autostart = on; };
     host.browsers = [] { return 1; };
     host.hotkey = true;
+    static bool hud_on = true;
+    host.hud = [] { return hud_on; };
+    host.set_hud = [](bool on) { hud_on = on; };
     win.create(GetModuleHandleW(nullptr), &server, host);
     // Screenshots never take focus or appear on screen: the window is shown
     // inactive, off the visible desktop (a game in use keeps the focus).

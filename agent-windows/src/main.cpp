@@ -101,6 +101,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     const bool discovery_ok = mdns.start(shown_name, server->port(), arc::to_hex(cfg.agent_id), &err);
     if (!discovery_ok) log_line("mDNS unavailable: " + err);
 
+    ui.set_hud(cfg.hud);
     ui.set_browsers([&backend, &tab_pipe_ok] { return tab_pipe_ok ? int(backend.link_count()) : -1; });
     ui.attach(server.get(), &store, server->port(), pc_name, discovery_ok);
     // First run: show what Archon is, but never over a full-screen game or a presentation.

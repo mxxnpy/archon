@@ -18,6 +18,7 @@ struct Bridge final : arc::ClientListener {
         arc_event e;
         std::memset(&e, 0, sizeof e);
         e.type = t;
+        e.battery = -1;
         e.message = e.id = e.endpoint_id = e.name = e.icon_key = e.route = e.group = e.detail = e.network = "";
         return e;
     }
@@ -71,6 +72,7 @@ struct Bridge final : arc::ClientListener {
                 e.meter = ev.endpoint.meter;
                 e.input = ev.endpoint.input ? 1 : 0;
                 e.is_default_input = ev.endpoint.is_default_input ? 1 : 0;
+                e.battery = ev.endpoint.battery;
                 cb(user, &e);
                 return;
             }
