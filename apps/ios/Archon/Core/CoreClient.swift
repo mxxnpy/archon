@@ -26,11 +26,16 @@ final class CoreClient {
         var route = ""
         var features: UInt32 = 0
         var panic = false
+        // 1.3
+        var active = false
+        var lost = false
+        var seq: UInt64 = 0
     }
 
     static let featureInputs = UInt32(ARC_FEATURE_INPUTS)
     static let featureRouting = UInt32(ARC_FEATURE_ROUTING)
     static let featurePanic = UInt32(ARC_FEATURE_PANIC)
+    static let featureStream = UInt32(ARC_FEATURE_STREAM)
 
     static let maxVolume = Int(ARC_MAX_VOLUME)
     static let defaultPort = UInt16(ARC_DEFAULT_PORT)
@@ -100,6 +105,10 @@ final class CoreClient {
     func setRoute(source: String, endpoint: String) { arc_client_set_source_route(handle, source, endpoint) }
     /// Mute every device on the PC / undo. Queued until the link is up.
     func panicMute(_ on: Bool) { arc_client_panic_mute(handle, on ? 1 : 0) }
+    /// Listen to the PC on this phone; audio then arrives as ARC_EV_AUDIO.
+    @discardableResult
+    func streamStart(mutePC: Bool) -> Bool { arc_client_stream_start(handle, mutePC ? UInt32(ARC_STREAM_MUTE_PC) : 0, nil) != 0 }
+    func streamStop() { arc_client_stream_stop(handle) }
 
     static func generateId() -> Data {
         var id = [UInt8](repeating: 0, count: 16)
@@ -127,6 +136,7 @@ final class CoreClient {
               systemSounds: e.system_sounds != 0, meter: e.meter,
               data: e.data.map { Data(bytes: $0, count: e.data_len) },
               input: e.input != 0, isDefaultInput: e.is_default_input != 0, route: s(e.route),
-              features: e.features, panic: e.panic != 0)
+              features: e.features, panic: e.panic != 0,
+              active: e.active != 0, lost: e.lost != 0, seq: e.seq)
     }
 }

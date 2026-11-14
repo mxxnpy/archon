@@ -514,7 +514,15 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
     val icons by vm.icons.collectAsState()
     val levels by vm.levels.collectAsState()
     val selected by vm.selectedEndpoint.collectAsState()
+    val listening by vm.listening.collectAsState()
+    val listenError by vm.listenError.collectAsState()
+    val listenMutesPc by vm.listenMutesPc.collectAsState()
     val reduce = reduceMotion()
+    // Android 13+: the "listening" notification needs this permission; listening works either way.
+    val notifPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { vm.toggleListening() }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var menu by remember { mutableStateOf(false) }
     var devices by remember { mutableStateOf(false) }
     var confirmForget by remember { mutableStateOf(false) }
@@ -573,6 +581,22 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
                 },
                 contentAlignment = Alignment.Center,
             ) { Dot(dotColor) }
+            if (link.canListen) {
+                IconButton(
+                    onClick = {
+                        val needs = android.os.Build.VERSION.SDK_INT >= 33 && !listening &&
+                            ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                        if (needs) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        else vm.toggleListening()
+                    },
+                    enabled = link.status == LinkStatus.CONNECTED || listening,
+                ) {
+                    Icon(Glyphs.Headphones,
+                        contentDescription = stringResource(if (listening) R.string.listen_off else R.string.listen_on),
+                        tint = if (listening) Archon.Accent else Archon.Paper)
+                }
+            }
             if (link.canPanic) {
                 // Never queue a stale toggle while the link is down.
                 IconButton(onClick = { vm.togglePanic() }, enabled = link.status == LinkStatus.CONNECTED) {
@@ -633,6 +657,15 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
         ) {
             if (link.panic) item(span = { GridItemSpan(2) }, key = "panic") {
                 PanicBanner(vm)
+            }
+            if (listening) item(span = { GridItemSpan(2) }, key = "listening") {
+                ListeningBanner(vm, listenMutesPc)
+            }
+            listenError?.let { err ->
+                item(span = { GridItemSpan(2) }, key = "listen-error") {
+                    Text(stringResource(listenErrorText(err)), style = Type.Caption, color = Archon.Warn,
+                        modifier = Modifier.fillMaxWidth().clickable { vm.dismissListenError() }.padding(horizontal = 4.dp, vertical = 6.dp))
+                }
             }
             if (endpoint != null) item(span = { GridItemSpan(2) }, key = "master") {
                 MasterArc(endpoint, reduce, vm)
@@ -846,6 +879,40 @@ private fun AppCard(
             }
         }
     }
+}
+
+/** Shown while the PC's audio plays on this phone. */
+@Composable
+private fun ListeningBanner(vm: ArchonUi, mutesPc: Boolean) {
+    Column(Modifier.fillMaxWidth().background(Archon.Surface, RoundedCornerShape(20.dp)).padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp)) {
+        Row(Modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Dot(Archon.Accent)
+            Spacer(Modifier.width(12.dp))
+            Text(stringResource(R.string.listen_active), style = Type.Caption, color = Archon.Paper, modifier = Modifier.weight(1f))
+            Box(
+                Modifier.heightIn(min = 48.dp).padding(vertical = 6.dp).background(Archon.Accent, CircleShape)
+                    .clickable { vm.toggleListening() }.padding(horizontal = 16.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text(stringResource(R.string.listen_stop), style = Type.Caption, color = Archon.Ink) }
+        }
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { vm.setListenMutesPc(!mutesPc) },
+            verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.listen_mutes_pc), style = Type.Caption, color = Archon.Muted, modifier = Modifier.weight(1f))
+            androidx.compose.material3.Switch(
+                checked = mutesPc, onCheckedChange = { vm.setListenMutesPc(it) },
+                colors = androidx.compose.material3.SwitchDefaults.colors(
+                    checkedThumbColor = Archon.Ink, checkedTrackColor = Archon.Accent,
+                    uncheckedThumbColor = Archon.Muted, uncheckedTrackColor = Archon.Raised,
+                ),
+            )
+        }
+    }
+}
+
+private fun listenErrorText(err: Int) = when (err) {
+    CoreError.BUSY -> R.string.listen_err_busy
+    CoreError.CONNECTION_LOST -> R.string.listen_err_gone
+    else -> R.string.listen_err_other
 }
 
 /** Shown while the panic mute is on: the one place to undo it. */

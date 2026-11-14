@@ -73,6 +73,13 @@ object Glyphs {
         stroke { moveTo(17f, 10.5f); lineTo(14f, 13.5f) }
     }
 
+    /** Listen on the phone: headphones. */
+    val Headphones = glyph("headphones") {
+        stroke { moveTo(4f, 15f); lineTo(4f, 12f); arcTo(8f, 8f, 0f, false, true, 20f, 12f); lineTo(20f, 15f) }
+        stroke { moveTo(4f, 15f); lineTo(4f, 18f); arcTo(1.5f, 1.5f, 0f, false, false, 5.5f, 19.5f); lineTo(7.5f, 19.5f); lineTo(7.5f, 14f); lineTo(4f, 14f) }
+        stroke { moveTo(20f, 15f); lineTo(20f, 18f); arcTo(1.5f, 1.5f, 0f, false, true, 18.5f, 19.5f); lineTo(16.5f, 19.5f); lineTo(16.5f, 14f); lineTo(20f, 14f) }
+    }
+
     val Bell = glyph("bell") {
         stroke { moveTo(6f, 16f); lineTo(6f, 11f); curveTo(6f, 7.7f, 8.7f, 5f, 12f, 5f); curveTo(15.3f, 5f, 18f, 7.7f, 18f, 11f); lineTo(18f, 16f); lineTo(19.5f, 17.5f); lineTo(4.5f, 17.5f); close() }
         stroke { moveTo(10f, 20f); lineTo(14f, 20f) }

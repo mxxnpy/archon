@@ -17,6 +17,12 @@ struct MixerView: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         if model.panic { PanicBanner() }
+                        if model.listening { ListeningBanner() }
+                        if let err = model.listenError {
+                            Text(ListenText.of(err)).font(.archonCaption).foregroundStyle(Archon.warn)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
+                                .onTapGesture { model.listenError = nil }
+                        }
                         if let e = model.currentEndpoint { MasterArc(endpoint: e) }
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                                   spacing: 12) {
@@ -91,6 +97,17 @@ struct MixerView: View {
             Spacer(minLength: 0)
             Dot(color: linkColor).frame(width: 44, height: 44)
                 .accessibilityLabel(Text(linkText))
+            if model.canListen {
+                Button { model.toggleListening() } label: {
+                    Image(systemName: model.listening ? "headphones.circle.fill" : "headphones.circle")
+                        .font(.system(size: 22, weight: .regular))
+                        .foregroundStyle(model.listening ? Archon.accent : Archon.paper)
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(model.listening ? "Parar de ouvir no celular" : "Ouvir o PC no celular")
+                .disabled(model.status != .connected && !model.listening)
+                .opacity(model.status == .connected || model.listening ? 1 : 0.4)
+            }
             if model.canPanic {
                 Button { model.togglePanic() } label: {
                     Image(systemName: model.panic ? "speaker.slash.circle.fill" : "speaker.slash.circle")
@@ -461,5 +478,47 @@ struct PanicBanner: View {
         .padding(.horizontal, 16).padding(.vertical, 6)
         .background(Archon.surface, in: RoundedRectangle(cornerRadius: 20))
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Shown while the PC's audio plays on this phone.
+struct ListeningBanner: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Dot(color: Archon.accent)
+                Text("Ouvindo o PC no celular").font(.archonCaption).foregroundStyle(Archon.paper)
+                Spacer(minLength: 0)
+                Button { model.stopListening() } label: {
+                    Text("Parar").font(.archonCaption.weight(.semibold)).foregroundStyle(Archon.ink)
+                        .padding(.horizontal, 16).frame(minHeight: 36)
+                        .background(Archon.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .frame(minHeight: 44)
+            }
+            Toggle(isOn: $model.listenMutesPC) {
+                Text("Silenciar o PC enquanto ouço").font(.archonCaption).foregroundStyle(Archon.muted)
+            }
+            .tint(Archon.accent)
+            .onChange(of: model.listenMutesPC) { _ in
+                // Applies to the stream right away: restart it with the new choice.
+                if model.listening { model.stopListening(); model.startListening() }
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(Archon.surface, in: RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+enum ListenText {
+    static func of(_ e: Int) -> LocalizedStringKey {
+        switch e {
+        case CoreErr.busy: return "O PC já está transmitindo para outros celulares ou não conseguiu capturar o som."
+        case CoreErr.connectionLost: return "A saída de som do PC deixou de existir. Escolha outra e tente de novo."
+        default: return "Não foi possível ouvir o PC agora. Tente de novo."
+        }
     }
 }

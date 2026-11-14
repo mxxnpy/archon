@@ -14,6 +14,7 @@
 namespace {
 
 JavaVM* g_vm = nullptr;
+jmethodID g_on_audio = nullptr;
 jmethodID g_on_event = nullptr;
 pthread_key_t g_detach_key;
 
@@ -56,9 +57,18 @@ void on_event(void* user, const arc_event* e) {
     auto* h = static_cast<Handle*>(user);
     JNIEnv* env = env_for_thread();
     if (!env) return;
+    if (e->type == ARC_EV_AUDIO) {  // 1.3: ~50 per second, its own light path
+        env->PushLocalFrame(4);
+        env->CallVoidMethod(h->target, g_on_audio, bytes(env, e->data, e->data_len), jlong(e->seq),
+                            jboolean(e->lost ? JNI_TRUE : JNI_FALSE));
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->PopLocalFrame(nullptr);
+        return;
+    }
     env->PushLocalFrame(16);
     const jint flags = (e->muted ? 1 : 0) | (e->is_default ? 2 : 0) | (e->playing ? 4 : 0) | (e->system_sounds ? 8 : 0) |
-                       (e->input ? 16 : 0) | (e->is_default_input ? 32 : 0) | (e->panic ? 64 : 0);
+                       (e->input ? 16 : 0) | (e->is_default_input ? 32 : 0) | (e->panic ? 64 : 0) |
+                       (e->active ? 128 : 0);
     env->CallVoidMethod(h->target, g_on_event, jint(e->type), jint(e->status), jint(e->error), str(env, e->message),
                         str(env, e->id), str(env, e->endpoint_id), str(env, e->name), str(env, e->icon_key),
                         jint(e->pid), jint(e->volume), flags, jint(e->meter), bytes(env, e->data, e->data_len),
@@ -81,7 +91,8 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     jclass cls = env->FindClass("dev/archon/app/core/NativeClient");
     if (!cls) return JNI_ERR;
     g_on_event = env->GetMethodID(cls, "onEvent", "(III[B[B[B[B[BIIII[B[BI)V");
-    return g_on_event ? JNI_VERSION_1_6 : JNI_ERR;
+    g_on_audio = env->GetMethodID(cls, "onAudio", "([BJZ)V");
+    return g_on_event && g_on_audio ? JNI_VERSION_1_6 : JNI_ERR;
 }
 
 JNIEXPORT jlong JNICALL Java_dev_archon_app_core_NativeClient_nativeCreate(JNIEnv* env, jobject self, jbyteArray id,
@@ -195,6 +206,16 @@ JNIEXPORT void JNICALL Java_dev_archon_app_core_NativeClient_nativeSetRoute(JNIE
 
 JNIEXPORT void JNICALL Java_dev_archon_app_core_NativeClient_nativePanic(JNIEnv*, jobject, jlong p, jboolean on) {
     if (H(p)) arc_client_panic_mute(H(p)->client, on ? 1 : 0);
+}
+
+JNIEXPORT jboolean JNICALL Java_dev_archon_app_core_NativeClient_nativeStreamStart(JNIEnv*, jobject, jlong p,
+                                                                                jboolean mute_pc) {
+    if (!H(p)) return JNI_FALSE;
+    return arc_client_stream_start(H(p)->client, mute_pc ? ARC_STREAM_MUTE_PC : 0u, nullptr) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL Java_dev_archon_app_core_NativeClient_nativeStreamStop(JNIEnv*, jobject, jlong p) {
+    if (H(p)) arc_client_stream_stop(H(p)->client);
 }
 
 JNIEXPORT void JNICALL Java_dev_archon_app_core_NativeClient_nativeRefresh(JNIEnv*, jobject, jlong p) {

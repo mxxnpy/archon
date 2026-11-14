@@ -73,4 +73,13 @@
     <string name="tile_muted">Everything on the PC is muted</string>
     <string name="tile_unmuted">The PC\'s sound is back on</string>
     <string name="tile_unsupported">Update Archon on the PC to use this</string>
+    <string name="listen_on">Listen to the PC on this phone</string>
+    <string name="listen_off">Stop listening on this phone</string>
+    <string name="listen_active">Listening to the PC on this phone</string>
+    <string name="listen_stop">Stop</string>
+    <string name="listen_mutes_pc">Mute the PC while I listen</string>
+    <string name="listen_channel">Listening to the PC</string>
+    <string name="listen_err_busy">The PC is already streaming to other phones or couldn\'t capture its sound.</string>
+    <string name="listen_err_gone">The PC\'s sound output went away. Pick another and try again.</string>
+    <string name="listen_err_other">Couldn\'t listen to the PC right now. Try again.</string>
 </resources>

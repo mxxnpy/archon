@@ -72,4 +72,13 @@
     <string name="tile_muted">Tudo silenciado no PC</string>
     <string name="tile_unmuted">Som do PC reativado</string>
     <string name="tile_unsupported">Atualize o Archon no PC para usar isto</string>
+    <string name="listen_on">Ouvir o PC no celular</string>
+    <string name="listen_off">Parar de ouvir no celular</string>
+    <string name="listen_active">Ouvindo o PC no celular</string>
+    <string name="listen_stop">Parar</string>
+    <string name="listen_mutes_pc">Silenciar o PC enquanto ouço</string>
+    <string name="listen_channel">Ouvindo o PC</string>
+    <string name="listen_err_busy">O PC já está transmitindo para outros celulares ou não conseguiu capturar o som.</string>
+    <string name="listen_err_gone">A saída de som do PC deixou de existir. Escolha outra e tente de novo.</string>
+    <string name="listen_err_other">Não foi possível ouvir o PC agora. Tente de novo.</string>
 </resources>

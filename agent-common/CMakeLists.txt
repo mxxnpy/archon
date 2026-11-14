@@ -15,6 +15,10 @@ set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
 set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
 # Same static C runtime as the agent (single exe, no VC++ redistributable).
 set(OPUS_STATIC_RUNTIME ON CACHE BOOL "" FORCE)
+# Every Apple Silicon CPU has NEON: use it without runtime detection.
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+  set(OPUS_PRESUME_NEON ON CACHE BOOL "" FORCE)
+endif()
 FetchContent_MakeAvailable(opus)
 
 add_library(archon_agent_common STATIC src/opus_streamer.cpp)

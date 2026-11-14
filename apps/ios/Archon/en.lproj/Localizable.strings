@@ -67,3 +67,13 @@
 "Não foi possível falar com o PC. Ele precisa estar ligado, na mesma rede." = "Couldn't reach the PC. It needs to be on and on the same network.";
 "Silencia todas as saídas e microfones do último PC usado no Archon." = "Mutes every output and microphone of the last PC used in Archon.";
 "Desfaz o “Silenciar tudo no PC”." = "Undoes “Mute everything on the PC”.";
+
+/* 1.3: listen on the phone */
+"Ouvir o PC no celular" = "Listen to the PC on this phone";
+"Parar de ouvir no celular" = "Stop listening on this phone";
+"Ouvindo o PC no celular" = "Listening to the PC on this phone";
+"Parar" = "Stop";
+"Silenciar o PC enquanto ouço" = "Mute the PC while I listen";
+"O PC já está transmitindo para outros celulares ou não conseguiu capturar o som." = "The PC is already streaming to other phones or couldn't capture its sound.";
+"A saída de som do PC deixou de existir. Escolha outra e tente de novo." = "The PC's sound output went away. Pick another and try again.";
+"Não foi possível ouvir o PC agora. Tente de novo." = "Couldn't listen to the PC right now. Try again.";

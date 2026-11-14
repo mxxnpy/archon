@@ -8,6 +8,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.archon.app.audio.ListenService
+import dev.archon.app.audio.StreamPlayer
+import kotlinx.coroutines.launch
 import dev.archon.app.core.CoreError
 import dev.archon.app.core.CoreEvent
 import dev.archon.app.core.LinkStatus
@@ -53,6 +56,7 @@ data class LinkState(
         get() = endpoints.values.filter { it.input }.let { m -> m.firstOrNull { it.isDefaultInput } ?: m.minByOrNull { it.name } }
     val canRoute: Boolean get() = features and NativeClient.FEATURE_ROUTING != 0
     val canPanic: Boolean get() = features and NativeClient.FEATURE_PANIC != 0
+    val canListen: Boolean get() = features and NativeClient.FEATURE_STREAM != 0
 }
 
 /** One row on the computers screen. */
@@ -122,8 +126,9 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
 
     fun onBackground() {
         discovery.stop()
-        // Nothing runs in the background: no battery or data use while hidden.
-        if (_screen.value is Screen.Mixer) client.disconnect()
+        // Nothing runs in the background (no battery or data use while hidden),
+        // except listening: the PC's audio keeps playing with the screen off.
+        if (_screen.value is Screen.Mixer && !_listening.value) client.disconnect()
     }
 
     override fun onCleared() {
@@ -203,6 +208,56 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
         client.setRoute(source, endpoint)
     }
 
+    // ---- listen on the phone (1.3) -------------------------------------------------
+
+    private val app = getApplication<Application>()
+    private val player = StreamPlayer()
+    private val prefs = app.getSharedPreferences("archon_ui", android.content.Context.MODE_PRIVATE)
+    private val _listening = MutableStateFlow(false)
+    override val listening: StateFlow<Boolean> = _listening.asStateFlow()
+    private val _listenError = MutableStateFlow<Int?>(null)
+    override val listenError: StateFlow<Int?> = _listenError.asStateFlow()
+    private val _listenMutesPc = MutableStateFlow(prefs.getBoolean("listen_mutes_pc", true))
+    override val listenMutesPc: StateFlow<Boolean> = _listenMutesPc.asStateFlow()
+
+    init {
+        client.audioSink = { data, _, lost -> player.feed(data, lost) }
+        ListenService.stopRequest = { viewModelScope.launch { stopListening() } }
+    }
+
+    override fun toggleListening() = if (_listening.value) stopListening() else startListening()
+
+    private fun startListening() {
+        if (_listening.value || _link.value.status != LinkStatus.CONNECTED) return
+        player.start()
+        _listening.value = true
+        _listenError.value = null
+        val pc = (_screen.value as? Screen.Mixer)?.target?.name ?: ""
+        runCatching { ListenService.start(app, pc) }
+        if (!client.streamStart(_listenMutesPc.value)) stopListening()
+    }
+
+    private fun stopListening() {
+        if (!_listening.value) return
+        _listening.value = false
+        client.streamStop()
+        player.stop()
+        runCatching { ListenService.stop(app) }
+    }
+
+    override fun setListenMutesPc(on: Boolean) {
+        _listenMutesPc.value = on
+        prefs.edit().putBoolean("listen_mutes_pc", on).apply()
+        if (_listening.value) {  // applies right away
+            stopListening()
+            startListening()
+        }
+    }
+
+    override fun dismissListenError() {
+        _listenError.value = null
+    }
+
     override fun togglePanic() {
         val on = !_link.value.panic
         _link.update { it.copy(panic = on) }
@@ -229,6 +284,7 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
     }
 
     private fun resetLink() {
+        stopListening()
         _link.value = LinkState()
         _selectedEndpoint.value = null
     }
@@ -260,6 +316,14 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
             }
             CoreEvent.SOURCE_REMOVED -> _link.update { it.copy(sources = it.sources - e.id) }
             CoreEvent.AGENT_INFO -> _link.update { it.copy(features = e.features, panic = e.panic) }
+            CoreEvent.STREAM_STATE -> if (!e.active && e.error != CoreError.NONE) viewModelScope.launch {
+                // Stopped by the PC for a reason (output gone, too many listeners).
+                // A dropped link is not one: listening resumes on reconnect.
+                if (_listening.value && _link.value.status == LinkStatus.CONNECTED) {
+                    _listenError.value = e.error
+                    stopListening()
+                }
+            }
             CoreEvent.METERS -> {
                 val d = e.data ?: return
                 _levels.update { old ->
@@ -306,6 +370,9 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
             val port = message.substringAfterLast('|').toIntOrNull()
             if (port != null) screen.target.agentId?.let { store.updateAddress(it, host, port) }
             screen.target.agentId?.let { store.lastPc = it }  // the quick-settings tile acts on this PC
+        }
+        if (status == LinkStatus.CONNECTED && _listening.value) {
+            client.streamStart(_listenMutesPc.value)  // the PC stops streaming when the link drops
         }
         if (status != LinkStatus.FAILED) return
         if (screen is Screen.Mixer && CoreError.invalidatesPairing(error)) {

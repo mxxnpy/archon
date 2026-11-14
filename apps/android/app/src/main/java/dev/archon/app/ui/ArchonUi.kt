@@ -31,4 +31,14 @@ interface ArchonUi {
     fun setRoute(source: String, endpoint: String)
     /** Mute everything on the PC / undo. */
     fun togglePanic()
+
+    /** "Ouvir no celular": the PC's audio plays on this phone. */
+    val listening: StateFlow<Boolean>
+    /** Why listening stopped on its own (CoreError code), shown once. */
+    val listenError: StateFlow<Int?>
+    /** Mute the PC's speakers while listening (remembered). */
+    val listenMutesPc: StateFlow<Boolean>
+    fun toggleListening()
+    fun setListenMutesPc(on: Boolean)
+    fun dismissListenError()
 }

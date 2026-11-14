@@ -52,7 +52,7 @@ enum LinkStatus: Int {
 
 enum CoreErr {
     static let none = 0, wrongCode = 4, locked = 5, rejected = 6, busy = 7, timeout = 9
-    static let version = 2, unknown = 3, authFailed = 8, revoked = 10, connectFailed = 100
+    static let version = 2, unknown = 3, authFailed = 8, revoked = 10, connectFailed = 100, connectionLost = 101
     /// Unverified refusal (may be spoofed): ask the user, never auto-forget.
     static let notRecognized = 102, wrongAgent = 103
     /// Only an authenticated revocation (inside the encrypted channel) forgets the pairing.
@@ -75,6 +75,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var features: UInt32 = 0
     /// Everything on the PC muted by the panic mute.
     @Published private(set) var panic = false
+    /// "Ouvir no celular": the user wants the PC's audio on this phone.
+    @Published private(set) var listening = false
+    /// Why listening stopped on its own (CoreErr code), shown once.
+    @Published var listenError: Int?
+    /// Mute the PC's speakers while listening (remembered).
+    @Published var listenMutesPC = UserDefaults.standard.object(forKey: "listenMutesPC") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(listenMutesPC, forKey: "listenMutesPC") }
+    }
+    private let player = StreamPlayer()
     @Published var pairingRemovedNotice = false
     @Published private(set) var paired: [PairedPC] = [] {
         didSet { discovery.pinned = Set(paired.map(\.agentId)) }
@@ -93,8 +102,17 @@ final class AppModel: ObservableObject {
     init() {
         paired = store.all()
         discovery.pinned = Set(paired.map(\.agentId))  // didSet doesn't run inside init
+        let player = self.player
         client = CoreClient(controllerId: store.controllerId, name: UIDevice.current.name) { [weak self] ev in
+            // Audio goes straight to the player's queue (50 per second): never via the main thread.
+            if ev.type == ARC_EV_AUDIO {
+                player.feed(packet: ev.data, lost: ev.lost)
+                return
+            }
             Task { @MainActor in self?.apply(ev) }
+        }
+        player.onStopRequest = { [weak self] in
+            Task { @MainActor in self?.stopListening() }
         }
         #if DEBUG
         if let i = CommandLine.arguments.firstIndex(of: "-ArchonDemo"), i + 1 < CommandLine.arguments.count {
@@ -119,7 +137,7 @@ final class AppModel: ObservableObject {
                 "m1": Endpoint(id: "m1", name: "Microfone (USB)", volume: 7500, muted: false, isDefault: false, meter: 8,
                                input: true, isDefaultInput: true),
             ]
-            features = CoreClient.featureInputs | CoreClient.featureRouting | CoreClient.featurePanic
+            features = CoreClient.featureInputs | CoreClient.featureRouting | CoreClient.featurePanic | CoreClient.featureStream
             let list = [
                 Source(id: "s1", endpointId: "e1", name: "Spotify", iconKey: "", volume: 7200, muted: false, playing: true, system: false, meter: 2),
                 Source(id: "s2", endpointId: "e1", name: "Discord", iconKey: "", volume: 8000, muted: false, playing: true, system: false, meter: 3,
@@ -144,6 +162,8 @@ final class AppModel: ObservableObject {
             mixer(); status = .reconnecting
         case "panic":
             mixer(); status = .connected; panic = true
+        case "listen":
+            mixer(); status = .connected; listening = true
         case "notrecognized":
             screen = .mixer(pc); status = .failed; error = CoreErr.notRecognized
         default:
@@ -182,7 +202,8 @@ final class AppModel: ObservableObject {
 
     func background() {
         discovery.stop()
-        if case .mixer = screen { client.disconnect() }
+        // Listening keeps the link (and the audio) alive with the screen locked.
+        if case .mixer = screen, !listening { client.disconnect() }
     }
 
     // MARK: navigation
@@ -207,6 +228,7 @@ final class AppModel: ObservableObject {
     }
 
     func back() {
+        stopListening()
         client.disconnect()
         resetLink()
         screen = .computers
@@ -277,6 +299,29 @@ final class AppModel: ObservableObject {
     }
 
     var canRoute: Bool { features & CoreClient.featureRouting != 0 }
+    var canListen: Bool { features & CoreClient.featureStream != 0 }
+
+    func toggleListening() { listening ? stopListening() : startListening() }
+
+    func startListening() {
+        guard !listening, status == .connected else { return }
+        do {
+            try player.start()
+        } catch {
+            listenError = CoreErr.busy
+            return
+        }
+        listening = true
+        listenError = nil
+        if !client.streamStart(mutePC: listenMutesPC) { stopListening() }
+    }
+
+    func stopListening() {
+        guard listening else { return }
+        listening = false
+        client.streamStop()
+        player.stop()
+    }
     var canPanic: Bool { features & CoreClient.featurePanic != 0 }
 
     /// Send an app to an output; "" = follow the PC's default again.
@@ -311,6 +356,7 @@ final class AppModel: ObservableObject {
     }
 
     private func resetLink() {
+        stopListening()
         status = .idle; error = CoreErr.none; synced = false
         endpoints = [:]; sources = [:]; levels = [:]; selectedEndpoint = nil
         features = 0; panic = false
@@ -327,6 +373,10 @@ final class AppModel: ObservableObject {
                 connectedVia = e.message
                 store.updateAddress(id, host: String(e.message[..<bar]), port: port)
                 UserDefaults.standard.set(id, forKey: PanicRunner.lastPCKey)  // shortcuts act on this PC
+            }
+            // The PC stops streaming when the link drops: ask again once it is back.
+            if status == .connected, listening {
+                client.streamStart(mutePC: listenMutesPC)
             }
             if status == .failed, case .mixer(let t) = screen, CoreErr.invalidatesPairing(error) {
                 if let id = t.agentId { store.forget(id) }
@@ -359,6 +409,15 @@ final class AppModel: ObservableObject {
         case ARC_EV_AGENT_INFO:
             features = e.features
             panic = e.panic
+        case ARC_EV_STREAM_STATE:
+            // Stopped by the PC for a reason (output gone, too many listeners): say so.
+            if !e.active, listening, e.error.rawValue != 0, Int(e.error.rawValue) != CoreErr.connectionLost {
+                listenError = Int(e.error.rawValue)
+                stopListening()
+            } else if !e.active, listening, Int(e.error.rawValue) == CoreErr.connectionLost, status == .connected {
+                listenError = CoreErr.connectionLost  // the captured output disappeared
+                stopListening()
+            }
         case ARC_EV_ICON:
             if let d = e.data, !d.isEmpty, let img = UIImage(data: d) { icons[e.iconKey] = img }
         case ARC_EV_METERS:

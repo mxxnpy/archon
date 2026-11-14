@@ -22,6 +22,15 @@ struct Bridge final : arc::ClientListener {
         return e;
     }
 
+    void on_audio(const uint8_t* p, size_t n, uint64_t seq, bool lost) override {
+        arc_event e = blank(ARC_EV_AUDIO);
+        e.data = n ? p : nullptr;
+        e.data_len = n;
+        e.seq = seq;
+        e.lost = lost ? 1 : 0;
+        cb(user, &e);
+    }
+
     void on_status(arc::ClientStatus s, arc::ErrorCode err, const std::string& msg) override {
         arc_event e = blank(ARC_EV_STATUS);
         e.status = arc_status(int(s));
@@ -93,6 +102,13 @@ struct Bridge final : arc::ClientListener {
                 e.icon_key = ev.id.c_str();
                 e.data = ev.data.data();
                 e.data_len = ev.data.size();
+                cb(user, &e);
+                return;
+            }
+            case K::StreamState: {
+                arc_event e = blank(ARC_EV_STREAM_STATE);
+                e.active = ev.stream.active ? 1 : 0;
+                e.error = arc_error(ev.stream.error);
                 cb(user, &e);
                 return;
             }
@@ -213,6 +229,15 @@ void arc_client_set_source_route(arc_client* c, const char* source_id, const cha
 
 void arc_client_panic_mute(arc_client* c, int on) {
     if (c) c->client->panic_mute(on != 0);
+}
+
+int arc_client_stream_start(arc_client* c, unsigned flags, const char* endpoint_id) {
+    if (!c) return 0;
+    return c->client->stream_start(uint8_t(flags), endpoint_id ? endpoint_id : "") ? 1 : 0;
+}
+
+void arc_client_stream_stop(arc_client* c) {
+    if (c) c->client->stream_stop();
 }
 
 void arc_client_refresh(arc_client* c) {

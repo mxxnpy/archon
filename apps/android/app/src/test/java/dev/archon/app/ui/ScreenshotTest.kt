@@ -55,6 +55,12 @@ class ScreenshotTest {
         override fun setMetersVisible(visible: Boolean) {}
         override fun setRoute(source: String, endpoint: String) {}
         override fun togglePanic() {}
+        override val listening = MutableStateFlow(false)
+        override val listenError = MutableStateFlow<Int?>(null)
+        override val listenMutesPc = MutableStateFlow(true)
+        override fun toggleListening() {}
+        override fun setListenMutesPc(on: Boolean) {}
+        override fun dismissListenError() {}
     }
 
     private val pc = Target("a".repeat(32), "DESKTOP-01", "192.168.0.10", 47321)
@@ -131,6 +137,12 @@ class ScreenshotTest {
     // 1.2: panic mute on (banner + red button), microphone card, app pinned to an output.
     @Test fun mixerPanic() = shoot("3e-mixer-panic", mixerUi().apply {
         link.value = link.value.copy(panic = true)
+    })
+
+    // 1.3: the PC's audio playing on the phone.
+    @Test fun mixerListening() = shoot("3f-mixer-listening", mixerUi().apply {
+        link.value = link.value.copy(features = link.value.features or NativeClient.FEATURE_STREAM)
+        listening.value = true
     })
 
     @Test fun mixerReconnecting() = shoot("3b-mixer-connecting", FakeUi().apply {

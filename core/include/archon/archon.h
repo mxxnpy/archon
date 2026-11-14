@@ -63,7 +63,11 @@ typedef enum {
     ARC_EV_STATE_SYNCED = 7,     /* full dump finished */
     ARC_EV_ICON = 8,             /* icon_key, data/data_len = PNG (empty = no icon) */
     ARC_EV_METERS = 9,           /* data = n x {u8 slot_hi, u8 slot_lo, u8 level 0..255}, data_len = 3n */
-    ARC_EV_AGENT_INFO = 10       /* features (ARC_FEATURE_*), panic, message = os ("windows", "macos") */
+    ARC_EV_AGENT_INFO = 10,      /* features (ARC_FEATURE_*), panic, message = os ("windows", "macos") */
+    ARC_EV_STREAM_STATE = 11,    /* 1.3: active (listening on the phone), error (why it stopped) */
+    ARC_EV_AUDIO = 12            /* 1.3: data/data_len = one Opus packet (48 kHz stereo 20 ms), seq; lost = 1
+                                    and no data: that frame never arrived (decode as a gap). Network thread,
+                                    ~50 per second: hand it to the audio thread quickly. */
 } arc_event_type;
 
 typedef struct {
@@ -90,11 +94,17 @@ typedef struct {
     const char* route;        /* SOURCE: output endpoint id the app is pinned to ("" = default) */
     uint32_t features;        /* AGENT_INFO */
     uint8_t panic;            /* AGENT_INFO: panic mute active */
+    /* 1.3 */
+    uint8_t active;           /* STREAM_STATE */
+    uint8_t lost;             /* AUDIO */
+    uint64_t seq;             /* AUDIO */
 } arc_event;
 
 #define ARC_FEATURE_INPUTS 1u
 #define ARC_FEATURE_ROUTING 2u
 #define ARC_FEATURE_PANIC 4u
+#define ARC_FEATURE_STREAM 8u
+#define ARC_STREAM_MUTE_PC 1u
 
 typedef void (*arc_event_cb)(void* user, const arc_event* event);
 
@@ -126,6 +136,10 @@ void arc_client_set_meters(arc_client* c, int on);
 void arc_client_set_source_route(arc_client* c, const char* source_id, const char* endpoint_id);
 /* 1.2: mute every device (1) / undo (0). Queued until the link is up. */
 void arc_client_panic_mute(arc_client* c, int on);
+/* 1.3: listen to the PC on this phone. flags: ARC_STREAM_MUTE_PC. endpoint_id NULL or "" = the PC's default
+   output. Needs a live link; returns 0 otherwise. Audio then arrives as ARC_EV_AUDIO events. */
+int arc_client_stream_start(arc_client* c, unsigned flags, const char* endpoint_id);
+void arc_client_stream_stop(arc_client* c);
 
 /* Agent id (16 bytes) and PC name stored in a pairing record. Returns 0 if malformed. */
 int arc_record_info(const uint8_t* record, size_t record_len, uint8_t out_agent_id[16], char* out_name, size_t name_cap);

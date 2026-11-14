@@ -393,6 +393,7 @@ public:
                 lk.unlock();
                 std::this_thread::sleep_for(40ms);
                 user_set_mute(job.first, job.second);
+                --inflight;
                 lk.lock();
             }
         });
@@ -420,9 +421,11 @@ public:
         {
             std::lock_guard<std::mutex> lk(qmu_);
             queue_.emplace_back(id, m);
+            ++inflight;
         }
         qcv_.notify_one();
     }
+    std::atomic<int> inflight{0};  // requests not applied yet
     void set_source_volume(const std::string&, uint16_t) override {}
     void set_source_mute(const std::string&, bool) override {}
     bool icon_png(const std::string&, Bytes&) override { return false; }
@@ -467,6 +470,14 @@ struct AsyncRig {
         started = srv->start(&err);
     }
     ~AsyncRig() { srv->stop(); }
+    // Every request the server issued so far has been applied by the "OS" (and
+    // the server had time to process the echoes). Fails after 5 s.
+    bool settled() {
+        std::this_thread::sleep_for(50ms);  // let the server post its requests
+        const bool ok = eventually([&] { return be.inflight.load() == 0; }, 5000);
+        std::this_thread::sleep_for(100ms);  // echoes reach the server
+        return ok && be.inflight.load() == 0;
+    }
     // The privacy invariant: the panic flag never claims "muted" with a live device.
     bool consistent() {
         const bool p = obs.panic.load();
@@ -482,13 +493,15 @@ TEST(v12_panic_quick_toggles_stay_consistent_with_async_os) {
     AsyncRig rig;
     REQUIRE(rig.started);
     for (int round = 0; round < 3; ++round) {
+        // The OS applies mutes later: what matters is that the state settles
+        // coherent (slow CI machines need more than a fixed wait).
         rig.srv->panic_mute(true);
         rig.srv->panic_mute(false);  // right after: the model must stay coherent
-        std::this_thread::sleep_for(400ms);
+        CHECK(rig.settled());
         CHECK(rig.consistent());
         rig.srv->panic_toggle();
         rig.srv->panic_toggle();
-        std::this_thread::sleep_for(400ms);
+        CHECK(rig.settled());
         CHECK(rig.consistent());
     }
     rig.srv->panic_mute(false);
