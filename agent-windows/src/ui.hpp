@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "archon/server.hpp"
+#include "mixer_window.hpp"
 
 namespace agent {
 
@@ -33,6 +34,9 @@ public:
     void on_streams_changed(size_t active) override;
 
     void show_error(const std::wstring& text);
+    // Browsers connected through the extension (-1 = bridge off); for the window's settings.
+    void set_browsers(std::function<int()> fn) { browsers_ = std::move(fn); }
+    void open_window() { window_.show(); }
 
 private:
     static LRESULT CALLBACK main_proc(HWND, UINT, WPARAM, LPARAM);
@@ -86,6 +90,8 @@ private:
     HFONT font_code_ = nullptr;
     UINT font_dpi_ = 0;
 
+    MixerWindow window_;  // the Archon window (mixer on the PC)
+    std::function<int()> browsers_;
     std::vector<arc::ConnectedController> connected_;
     std::vector<arc::PairedController> listed_;
 };

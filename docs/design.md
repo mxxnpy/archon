@@ -90,6 +90,45 @@ Ratios computed with the WCAG relative-luminance formula (Node script, sRGB hex)
 ### Windows tray popup (C++ agent)
 - 340 px `surface` card, radius 8, Segoe UI Variable: "Archon" + 18 px countdown ring (accent arc); one line "Digite este código no celular para conectar."; code `482 913` at 36 px/600 in `paper`; "Recusar" button. Tray icon: thin accent ring (turns `ok` when a phone is connected). Plain Direct2D/GDI drawing; no effects.
 
+### Desktop window (Windows, macOS, Linux agents)
+
+The same mixer on the PC, native per OS (Win32 + Direct2D, SwiftUI, GTK 4); the
+same tokens, rings and cards as the phone, laid out for a mouse and a keyboard.
+It sees exactly what a paired phone sees (through the agent's local view).
+
+- **Window**: 960 × 680 by default, at least 400 × 560, resizable; `bg`; the
+  system title bar in dark mode. Opened by clicking the tray icon (Windows), the
+  menu bar item (macOS) or the app launcher (Linux); closing hides it, the agent
+  keeps running.
+- **Top bar** (56 px): output pill (device name ▾, opens the output list) ·
+  phones line (`ok` dot + "2 celulares conectados", or `muted` "Nenhum celular
+  conectado") · right: **Perfis**, **Silenciar tudo** (panic, `error` fill when
+  on), **Configurações** — 40 px round `raised` buttons, 44 px hit target.
+- **Body**, width ≥ 760: a 320 px left column with the master arc (220 px), its
+  mute button, the "Ouvindo no celular" line while a phone listens and the
+  profile in force; the right side scrolls the card grid (mic + apps, then the
+  "Abas do navegador" header and the tab cards). Below 760: one column, master
+  arc 180 px on top.
+- **Cards** as on the phone (172 px wide, gap 12, columns fill the width).
+  Right-click an app card for its output menu.
+- **Mouse**: drag along a ring or horizontally on a card; the wheel over a ring
+  or card changes ±5 % per notch (±1 % with Shift). The hover state brightens a
+  card from `surface` to `raised`; nothing else moves.
+- **Keyboard**: Tab / Shift+Tab move between controls in reading order; on a
+  volume control ←/→ or ↑/↓ change ±5 % (±1 % with Shift), Home/End go to
+  0/100 %, Space or M toggles mute, Shift+F10 or the menu key opens a card's
+  output menu; Esc closes a panel. Focus = 2 px `accent` outline following the
+  control's shape, 3 px outside it.
+- **Panels** (Perfis, Configurações) slide in from the right as a 380 px
+  `surface` sheet over the grid (full width below 760), 220 ms; Esc or the ×
+  closes. Perfis: the same list and editor as the phone. Configurações:
+  celulares pareados (remover), iniciar com o Windows, extensão do navegador
+  (installed / not detected + how to install), atalho do "Silenciar tudo",
+  rede do PC, versão.
+- **Accessibility**: every control is exposed to the screen reader (UI
+  Automation / NSAccessibility / ATK) with name, role, value (volume %) and
+  state (muted, selected); reduce motion follows the system setting.
+
 ## Motion
 
 | Element | Motion | Duration / easing | Reduce Motion |

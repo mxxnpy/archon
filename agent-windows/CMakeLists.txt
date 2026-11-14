@@ -9,12 +9,15 @@
   src/tab_pipe.cpp
   src/win_proc.cpp
   src/network_watch.cpp
+  src/mixer_window.cpp
+  src/mixer_uia.cpp
   app.rc
 )
 set_target_properties(archon_agent PROPERTIES OUTPUT_NAME "Archon")
 target_link_libraries(archon_agent PRIVATE
   archon_core archon_agent_common ole32 oleaut32 uuid crypt32 dnsapi iphlpapi shell32 shlwapi
-  comctl32 windowscodecs advapi32 user32 gdi32 version propsys gdiplus dwmapi secur32 runtimeobject bcrypt)
+  comctl32 windowscodecs advapi32 user32 gdi32 version propsys gdiplus dwmapi secur32 runtimeobject bcrypt
+  d2d1 dwrite uiautomationcore)
 target_compile_definitions(archon_agent PRIVATE UNICODE _UNICODE)
 if(MSVC)
   target_compile_options(archon_agent PRIVATE /W4 /permissive- /utf-8)
@@ -49,12 +52,27 @@ if(MSVC)
   target_compile_options(archon_tabs_e2e PRIVATE /W4 /utf-8)
 endif()
 
+# The Archon window over a made-up mixer: screenshots and manual checks without
+# the real agent (--shot out.png [--panel ...] [--size WxH] [--focus N]).
+add_executable(archon_window_demo tests/window_demo.cpp src/mixer_window.cpp src/mixer_uia.cpp src/win_util.cpp)
+target_include_directories(archon_window_demo PRIVATE src)
+target_link_libraries(archon_window_demo PRIVATE archon_core archon_agent_common ole32 oleaut32 uuid crypt32 iphlpapi
+  shell32 shlwapi comctl32 windowscodecs advapi32 user32 gdi32 version propsys secur32 dwmapi d2d1 dwrite
+  uiautomationcore)
+target_compile_definitions(archon_window_demo PRIVATE UNICODE _UNICODE)
+if(MSVC)
+  target_compile_options(archon_window_demo PRIVATE /W4 /utf-8)
+endif()
+
 # Manual check of the network name the profiles see (1.5).
 add_executable(archon_network_probe tests/network_probe.cpp src/network_watch.cpp src/win_util.cpp)
 target_include_directories(archon_network_probe PRIVATE src)
 target_link_libraries(archon_network_probe PRIVATE archon_core ole32 oleaut32 uuid crypt32 iphlpapi shell32 shlwapi
   windowscodecs advapi32 user32 gdi32 version propsys secur32)
 target_compile_definitions(archon_network_probe PRIVATE UNICODE _UNICODE)
+if(MSVC)
+  target_compile_options(archon_network_probe PRIVATE /W4 /utf-8)
+endif()
 
 # Manual end-to-end check against the real audio stack (not part of ctest:
 # needs an output device and changes/restores the system sounds volume).

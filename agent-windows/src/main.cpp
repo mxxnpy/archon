@@ -58,9 +58,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     // Archon extension become sources next to the apps.
     TabSources backend(wasapi, [](uint32_t pid) { return to_utf8(process_image(pid)); });
     TabPipeServer tab_pipe(backend);
+    bool tab_pipe_ok = false;
     {
         std::string terr;
-        const bool tabs_ok = register_tabs_host(&terr) && tab_pipe.start(&terr);
+        tab_pipe_ok = register_tabs_host(&terr) && tab_pipe.start(&terr);
+        const bool tabs_ok = tab_pipe_ok;
         backend.set_enabled(tabs_ok);
         log_line(tabs_ok ? "browser tabs: ready for the extension" : "browser tabs unavailable: " + terr);
     }
@@ -99,7 +101,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     const bool discovery_ok = mdns.start(shown_name, server->port(), arc::to_hex(cfg.agent_id), &err);
     if (!discovery_ok) log_line("mDNS unavailable: " + err);
 
+    ui.set_browsers([&backend, &tab_pipe_ok] { return tab_pipe_ok ? int(backend.link_count()) : -1; });
     ui.attach(server.get(), &store, server->port(), pc_name, discovery_ok);
+    // First run: show what Archon is, but never over a full-screen game or a presentation.
+    if (cfg.first_run && !user_is_busy_fullscreen()) ui.open_window();
     const int rc = ui.run();
 
     log_line("agent stopping");

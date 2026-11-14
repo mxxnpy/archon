@@ -178,6 +178,11 @@ void TabSources::disconnect(uint64_t conn) {
     links_.erase(it);
 }
 
+size_t TabSources::link_count() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return links_.size();
+}
+
 size_t TabSources::tab_count() const {
     std::lock_guard<std::mutex> lk(mu_);
     size_t n = 0;

@@ -1,5 +1,7 @@
 #include "win_util.hpp"
 
+#include <shellapi.h>
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
@@ -378,3 +380,9 @@ bool icon_to_png(HICON icon, arc::Bytes& png) {
 bool is_portuguese_ui() { return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_PORTUGUESE; }
 
 }  // namespace agent
+
+bool agent::user_is_busy_fullscreen() {
+    QUERY_USER_NOTIFICATION_STATE s = QUNS_ACCEPTS_NOTIFICATIONS;
+    if (FAILED(SHQueryUserNotificationState(&s))) return false;
+    return s == QUNS_BUSY || s == QUNS_RUNNING_D3D_FULL_SCREEN || s == QUNS_PRESENTATION_MODE || s == QUNS_QUIET_TIME;
+}

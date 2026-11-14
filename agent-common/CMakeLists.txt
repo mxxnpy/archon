@@ -21,7 +21,7 @@ if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
 endif()
 FetchContent_MakeAvailable(opus)
 
-add_library(archon_agent_common STATIC src/opus_streamer.cpp src/mini_json.cpp src/tab_sources.cpp)
+add_library(archon_agent_common STATIC src/opus_streamer.cpp src/mini_json.cpp src/tab_sources.cpp src/desktop_model.cpp)
 target_include_directories(archon_agent_common PUBLIC src)
 target_link_libraries(archon_agent_common PUBLIC archon_core opus)
 if(MSVC)

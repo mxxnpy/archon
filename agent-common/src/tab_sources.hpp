@@ -44,6 +44,7 @@ public:
     // The browser went away: its tabs disappear.
     void disconnect(uint64_t conn);
     size_t tab_count() const;
+    size_t link_count() const;  // browsers connected now
 
     // ---- arc::AudioBackend (the server calls these) ---------------------------------
     bool start(arc::AudioSink& sink, std::string* err) override;

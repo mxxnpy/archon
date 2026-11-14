@@ -51,7 +51,7 @@ void draw_ring(Gdiplus::Graphics& g, float x, float y, float d, float w, float f
     if (fraction > 0.002f) g.DrawArc(&on, x, y, d, d, start, sweep * std::min(fraction, 1.f));
 }
 
-enum MenuId : UINT { ID_DEVICES = 100, ID_AUTOSTART, ID_OPEN_LOG, ID_UNLOCK, ID_EXIT, ID_PANIC };
+enum MenuId : UINT { ID_DEVICES = 100, ID_AUTOSTART, ID_OPEN_LOG, ID_UNLOCK, ID_EXIT, ID_PANIC, ID_OPEN };
 enum CtrlId : int { IDC_REJECT = 200, IDC_LIST, IDC_REMOVE, IDC_CLOSE, IDC_TITLE = 300, IDC_WANTS, IDC_CODE, IDC_HINT };
 
 struct PairRequest {
@@ -253,6 +253,20 @@ void AgentUi::attach(arc::Server* server, arc::TrustStore* store, uint16_t port,
     pc_name_ = pc_name;
     discovery_ok_ = discovery_ok;
     add_tray();
+    WindowHost host;
+    host.paired = [this] { return store_ ? store_->list() : std::vector<arc::PairedController>{}; };
+    host.forget = [this](const arc::Id16& id) {
+        if (server_) server_->revoke(id);  // removes from the store and disconnects it
+    };
+    host.autostart = [] { return autostart_enabled(); };
+    host.set_autostart = [](bool on) { set_autostart(on); };
+    host.browsers = [this] { return browsers_ ? browsers_() : -1; };
+    host.open_log = [] {
+        const std::wstring log = app_dir() + L"\\agent.log";
+        ShellExecuteW(nullptr, L"open", log.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    };
+    host.hotkey = hotkey_ok_;
+    window_.create(inst_, server_, std::move(host));
     if (first_run_) balloon(T().first_title, T().first_text);
 }
 
@@ -268,6 +282,7 @@ int AgentUi::run() {
 }
 
 void AgentUi::destroy() {
+    window_.destroy();
     NOTIFYICONDATAW nid{sizeof nid};
     nid.hWnd = main_;
     nid.uID = kTrayId;
@@ -353,6 +368,7 @@ void AgentUi::balloon(const std::wstring& title, const std::wstring& text) {
 
 void AgentUi::show_menu() {
     HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, ID_OPEN, is_portuguese_ui() ? L"Abrir o Archon" : L"Open Archon");
     std::wstring header = fmt(T().connected_fmt, int(connected_.size()));
     if (streams_) header += T().listening;
     AppendMenuW(m, MF_STRING | MF_DISABLED, 0, header.c_str());
@@ -365,13 +381,14 @@ void AgentUi::show_menu() {
     AppendMenuW(m, MF_STRING, ID_OPEN_LOG, T().open_log);
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_EXIT, T().exit);
-    SetMenuDefaultItem(m, ID_DEVICES, FALSE);
+    SetMenuDefaultItem(m, ID_OPEN, FALSE);
     POINT pt;
     GetCursorPos(&pt);
     SetForegroundWindow(main_);
     const UINT cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, 0, main_, nullptr);
     DestroyMenu(m);
     switch (cmd) {
+        case ID_OPEN: window_.show(); break;
         case ID_DEVICES: show_devices(); break;
         case ID_AUTOSTART: set_autostart(!autostart_enabled()); break;
         case ID_OPEN_LOG: {
@@ -408,22 +425,25 @@ LRESULT AgentUi::handle_main(HWND h, UINT m, WPARAM w, LPARAM l) {
         case WM_APP_TRAY:
             switch (LOWORD(l)) {
                 case WM_CONTEXTMENU:
+                    show_menu();
+                    break;
                 case NIN_SELECT:
                 case NIN_KEYSELECT:
-                    show_menu();
+                    window_.show();  // click opens the window; right-click the menu
                     break;
                 default:
                     break;
             }
             return 0;
-        case WM_APP_SHOW_DEVICES:
-            show_devices();
+        case WM_APP_SHOW_DEVICES:  // a second launch of Archon.exe
+            window_.show();
             return 0;
         case WM_HOTKEY:
             if (w == kPanicHotkey && server_) server_->panic_toggle();
             return 0;
         case WM_APP_STREAMS:
             streams_ = size_t(w);
+            window_.set_streams(streams_);
             update_tray_tip();
             return 0;
         case WM_APP_PANIC:
@@ -446,6 +466,7 @@ LRESULT AgentUi::handle_main(HWND h, UINT m, WPARAM w, LPARAM l) {
             std::unique_ptr<std::vector<arc::ConnectedController>> p(
                 reinterpret_cast<std::vector<arc::ConnectedController>*>(l));
             connected_ = *p;
+            window_.set_connected(connected_.size());
             update_tray_tip();
             if (devices_) fill_devices();
             return 0;

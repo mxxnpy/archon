@@ -51,5 +51,8 @@ std::wstring display_name();
 bool icon_to_png(HICON icon, arc::Bytes& png);
 
 bool is_portuguese_ui();
+// True while the user is in a full-screen game or app, presenting, or in quiet
+// hours: Archon must not show or bring anything to the front then.
+bool user_is_busy_fullscreen();
 
 }  // namespace agent
