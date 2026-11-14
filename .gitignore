@@ -21,10 +21,7 @@ DerivedData/
 
 # Internal working state of the maintainers' process (kept local, not published)
 .forge/
-.creative/brief.md
-.creative/reports/
-.creative/evidence/
-.creative/HANDOFF.md
+.creative/
 
 # Secrets / local test pairing records
 *.key
@@ -38,7 +35,3 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Rejected design explorations (kept locally for the record)
-.creative/directions/direction-a.html
-.creative/directions/direction-b.html
-.creative/directions/direction-c.html

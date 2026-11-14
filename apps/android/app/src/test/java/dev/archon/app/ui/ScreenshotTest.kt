@@ -81,6 +81,14 @@ class ScreenshotTest {
 
     @Test fun computersEmpty() = shoot("1b-computers-empty", FakeUi())
 
+    // Long PC name: wraps to a second line on the radar instead of crossing it.
+    @Test fun computersLongName() = shoot("1c-computers-long-name", FakeUi().apply {
+        computers.value = listOf(
+            PcRow(Target("d".repeat(32), "ESTACAO-DE-TRABALHO-DO-ESCRITORIO", "192.168.0.40", 47321), paired = false, online = true),
+            PcRow(Target("e".repeat(32), "Ayu", "192.168.0.41", 47321), paired = true, online = false),
+        )
+    })
+
     @Test fun pairing() {
         val ui = FakeUi().apply {
             screen.value = Screen.Pairing(pc)

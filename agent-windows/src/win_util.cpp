@@ -6,9 +6,12 @@
 #include <shlobj.h>
 #include <wincodec.h>
 #include <wincrypt.h>
+#define SECURITY_WIN32
+#include <security.h>  // sspi.h + secext.h (GetUserNameExW)
 #include <wrl/client.h>
 
 #include <ctime>
+#include <iterator>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -35,16 +38,35 @@ std::wstring to_wide(const std::string& s) {
     return w;
 }
 
-std::wstring app_dir() {
+static std::wstring resolve_app_dir() {
+    // Never a relative path: at logon the working directory is not ours, and a
+    // folder there would hold a different agent id (phones could not resume).
     PWSTR base = nullptr;
-    std::wstring dir;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_CREATE, nullptr, &base))) {
-        dir = std::wstring(base) + L"\\Archon";
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_CREATE, nullptr, &base)) && base) {
+        std::wstring dir = std::wstring(base) + L"\\Archon";
         CoTaskMemFree(base);
-    } else {
-        dir = L".\\Archon";
+        return dir;
     }
-    CreateDirectoryW(dir.c_str(), nullptr);
+    if (base) CoTaskMemFree(base);
+    wchar_t env[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableW(L"APPDATA", env, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) return std::wstring(env, n) + L"\\Archon";
+    // Last resort: next to the executable.
+    std::wstring exe(MAX_PATH, L'\0');
+    const DWORD m = GetModuleFileNameW(nullptr, exe.data(), DWORD(exe.size()));
+    exe.resize(m);
+    const size_t slash = exe.find_last_of(L"\\/");
+    return (slash == std::wstring::npos ? std::wstring(L"C:\\ProgramData") : exe.substr(0, slash)) + L"\\Archon";
+}
+
+std::wstring app_dir() {
+    // Resolved once: every file of the agent (config, trust store, log) must
+    // live in the same place for the whole run.
+    static const std::wstring dir = [] {
+        std::wstring d = resolve_app_dir();
+        CreateDirectoryW(d.c_str(), nullptr);
+        return d;
+    }();
     return dir;
 }
 
@@ -252,6 +274,35 @@ std::wstring computer_name() {
     DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
     if (!GetComputerNameW(buf, &n)) return L"PC";
     return std::wstring(buf, n);
+}
+
+// First word of a name ("Ana Maria Souza" -> "Ana", "ana@x.com" -> "ana").
+static std::wstring first_word(std::wstring s) {
+    const size_t at = s.find(L'@');
+    if (at != std::wstring::npos) s.resize(at);
+    const size_t b = s.find_first_not_of(L" \t");
+    if (b == std::wstring::npos) return {};
+    s.erase(0, b);
+    const size_t e = s.find_first_of(L" \t");
+    if (e != std::wstring::npos) s.resize(e);
+    return s;
+}
+
+std::wstring display_name() {
+    // The account's display name (Microsoft account or local "full name"),
+    // then the sign-in name, then the computer name.
+    wchar_t buf[256];
+    ULONG n = ULONG(std::size(buf));
+    if (GetUserNameExW(NameDisplay, buf, &n) && n > 0) {
+        const std::wstring w = first_word(std::wstring(buf, n));
+        if (!w.empty()) return w;
+    }
+    DWORD m = DWORD(std::size(buf));
+    if (GetUserNameW(buf, &m) && m > 1) {
+        const std::wstring w = first_word(std::wstring(buf, m - 1));
+        if (!w.empty()) return w;
+    }
+    return computer_name();
 }
 
 bool icon_to_png(HICON icon, arc::Bytes& png) {

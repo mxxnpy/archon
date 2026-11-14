@@ -26,7 +26,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
 
     Config cfg = load_config();
     if (cfg.first_run) set_autostart(true);
-    log_line("agent starting");
+    // Where the state lives and which identity was loaded: phones resume by this id.
+    log_line("agent starting (data: " + to_utf8(app_dir()) + ", id " + arc::to_hex(cfg.agent_id).substr(0, 8) +
+             (cfg.first_run ? ", new" : "") + ")");
 
     const std::wstring store_path = app_dir() + L"\\paired.bin";
     arc::FileTrustStore store(to_utf8(store_path), dpapi_protect, dpapi_unprotect);
@@ -43,10 +45,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     if (!ui.create(inst, cfg.first_run)) return 1;
 
     const std::wstring pc_name = computer_name();
+    // Phones show this on the radar: the user's name is short and friendly;
+    // the computer name stays in the devices window for manual connection.
+    const std::wstring shown_name = display_name();
     WasapiBackend backend;
     arc::ServerConfig scfg;
     scfg.agent_id = cfg.agent_id;
-    scfg.agent_name = to_utf8(pc_name);
+    scfg.agent_name = to_utf8(shown_name);
     scfg.port = cfg.port;
     scfg.initial_lockouts = cfg.lockouts;
     scfg.locked_until_unix = cfg.locked_until;
@@ -67,7 +72,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     log_line("listening on port " + std::to_string(server->port()));
 
     MdnsAdvertiser mdns;
-    const bool discovery_ok = mdns.start(pc_name, server->port(), arc::to_hex(cfg.agent_id), &err);
+    const bool discovery_ok = mdns.start(shown_name, server->port(), arc::to_hex(cfg.agent_id), &err);
     if (!discovery_ok) log_line("mDNS unavailable: " + err);
 
     ui.attach(server.get(), &store, server->port(), pc_name, discovery_ok);

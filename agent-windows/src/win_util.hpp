@@ -42,6 +42,8 @@ std::vector<std::string> local_addresses();
 
 // Computer name for display and mDNS (NetBIOS-safe, at most 63 chars).
 std::wstring computer_name();
+// Short, human name shown on the phone: the user's first name, else the computer name.
+std::wstring display_name();
 
 // HICON -> PNG bytes (premultiplied alpha handled). Needs COM initialized.
 bool icon_to_png(HICON icon, arc::Bytes& png);

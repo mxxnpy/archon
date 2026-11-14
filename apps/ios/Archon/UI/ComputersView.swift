@@ -16,7 +16,7 @@ struct ComputersView: View {
                 Text("Computadores").font(.archonLargeTitle).foregroundStyle(Archon.paper)
                     .accessibilityAddTraits(.isHeader)
                     .padding(.top, 8)
-                Radar(rows: rows, searching: discovery.searching) { model.open($0.target) }
+                Radar(rows: rows, active: model.status != .connected) { model.open($0.target) }
                     .frame(height: 300)
                     .dynamicTypeSize(...DynamicTypeSize.xLarge)
 
@@ -80,42 +80,33 @@ private func statusText(_ r: PCRow) -> String {
 
 struct Radar: View {
     var rows: [PCRow]
-    var searching: Bool
+    /// True while no PC is connected: the pulse keeps going the whole time the
+    /// radar is on screen. Reduce Motion turns it off (the user's way to stop
+    /// moving content); TimelineView also pauses it in the background.
+    var active: Bool
     var pick: (PCRow) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var pulse: CGFloat = 0
-    @State private var pulseRun = 0
 
     var body: some View {
         GeometryReader { g in
+            let center = CGPoint(x: g.size.width / 2, y: 150)
             ZStack {
-                RadarRings(center: CGPoint(x: g.size.width / 2, y: 150), pulse: pulse)
+                TimelineView(.animation(minimumInterval: nil, paused: !active || reduce)) { ctx in
+                    RadarRings(center: center, pulse: (active && !reduce) ? Self.phase(ctx.date) : 0)
+                }
                 ForEach(rows) { row in
-                    RadarPoint(row: row, center: CGPoint(x: g.size.width / 2, y: 150), pick: pick)
+                    RadarPoint(row: row, center: center, pick: pick)
                 }
             }
             .animation(reduce ? nil : Motion.ui, value: rows)
         }
         .accessibilityElement(children: .contain)
-        .onChange(of: searching) { _ in runPulse() }
-        .onChange(of: rows.count) { _ in runPulse() }
-        .onAppear { runPulse() }
     }
 
-    /// The pulse plays twice while searching, then rests (nothing loops forever).
-    private func runPulse() {
-        guard searching, !reduce else { pulse = 0; return }
-        pulseRun += 1
-        let run = pulseRun
-        Task { @MainActor in
-            for _ in 0..<2 {  // 4.8 s: under the 5 s limit for moving content (WCAG 2.2.2)
-                guard run == pulseRun else { return }
-                pulse = 0.001
-                withAnimation(.linear(duration: 2.4)) { pulse = 1 }
-                try? await Task.sleep(nanoseconds: 2_400_000_000)
-            }
-            if run == pulseRun { pulse = 0 }
-        }
+    /// 0..1 position in the 2.4 s pulse loop (never exactly 0, so the ring shows).
+    static func phase(_ date: Date) -> CGFloat {
+        let p = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4
+        return CGFloat(max(p, 0.001))
     }
 }
 
@@ -160,7 +151,7 @@ struct PCRowView: View {
     }
 }
 
-/// Orbits, the searching pulse and the phone glyph (split out so the Swift
+/// Orbits, the pulse and the phone glyph (split out so the Swift
 /// type-checker handles each piece quickly).
 private struct RadarRings: View {
     let center: CGPoint
@@ -206,11 +197,11 @@ private struct RadarPoint: View {
         return Button { pick(row) } label: {
             HStack(spacing: 6) {
                 if labelLeft {
-                    label
+                    label(alignRight: true)
                     Dot(color: statusColor(row))
                 } else {
                     Dot(color: statusColor(row))
-                    label
+                    label(alignRight: false)
                 }
             }
             .frame(width: 140, alignment: labelLeft ? .trailing : .leading)
@@ -221,9 +212,13 @@ private struct RadarPoint: View {
         .accessibilityHidden(true)
     }
 
-    private var label: some View {
+    /// Long names wrap to a second line (aligned toward the dot) instead of
+    /// running across the radar; beyond two lines they end with "…".
+    private func label(alignRight: Bool) -> some View {
         Text(row.target.name).font(.archonCaption)
             .foregroundStyle(row.online ? Archon.paper : Archon.muted)
-            .lineLimit(1).truncationMode(.tail)
+            .lineLimit(2).truncationMode(.tail)
+            .multilineTextAlignment(alignRight ? .trailing : .leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

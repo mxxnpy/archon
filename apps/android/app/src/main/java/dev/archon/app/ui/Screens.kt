@@ -35,6 +35,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -139,7 +140,7 @@ private fun Modifier.appear(index: Int, reduce: Boolean): Modifier {
 @Composable
 private fun ComputersScreen(vm: ArchonUi) {
     val rows by vm.computers.collectAsState()
-    val searching by vm.searching.collectAsState()
+    val link by vm.link.collectAsState()
     val notice by vm.notice.collectAsState()
     val reduce = reduceMotion()
     var adding by remember { mutableStateOf(false) }
@@ -149,7 +150,7 @@ private fun ComputersScreen(vm: ArchonUi) {
             Text(stringResource(R.string.computers_title), style = Type.LargeTitle, color = Archon.Paper,
                 modifier = Modifier.padding(top = 8.dp).semantics { heading() })
             Spacer(Modifier.height(8.dp))
-            Radar(rows, searching, reduce, onPick = { vm.open(it.target) })
+            Radar(rows, active = link.status != LinkStatus.CONNECTED, reduce, onPick = { vm.open(it.target) })
             Spacer(Modifier.height(8.dp))
             if (notice == Notice.PAIRING_REMOVED) {
                 Row(
@@ -189,19 +190,20 @@ private fun ComputersScreen(vm: ArchonUi) {
 private fun angleFor(key: String): Double = Math.toRadians(((key.hashCode() and 0x7fffffff) % 360).toDouble())
 
 @Composable
-private fun Radar(rows: List<PcRow>, searching: Boolean, reduce: Boolean, onPick: (PcRow) -> Unit) {
-    // The pulse plays twice while searching, then rests (nothing loops forever).
+private fun Radar(rows: List<PcRow>, active: Boolean, reduce: Boolean, onPick: (PcRow) -> Unit) {
+    // While no PC is connected the pulse keeps going as long as the radar is on
+    // screen (Compose suspends it in the background). Reduce Motion stops it:
+    // that is the user's way to pause moving content.
     val pulse = remember { Animatable(0f) }
-    LaunchedEffect(searching, rows.size, reduce) {
-        if (!searching || reduce) {
+    LaunchedEffect(active, reduce) {
+        if (!active || reduce) {
             pulse.snapTo(0f)
             return@LaunchedEffect
         }
-        repeat(2) {  // 4.8 s total: under the 5 s limit for moving content (WCAG 2.2.2)
-            pulse.snapTo(0f)
+        while (true) {
+            pulse.snapTo(0.001f)
             pulse.animateTo(1f, tween(2400, easing = LinearEasing))
         }
-        pulse.snapTo(0f)
     }
     val desc = stringResource(R.string.a11y_radar, rows.size)
     BoxWithConstraints(Modifier.fillMaxWidth().height(300.dp).semantics { contentDescription = desc }) {
@@ -243,7 +245,11 @@ private fun Radar(rows: List<PcRow>, searching: Boolean, reduce: Boolean, onPick
                         ) {
                             val name = @Composable {
                                 // Decorative (rows below carry the names at full size): cap growth at 1.3×.
-                                Text(row.target.name, style = Type.Caption.copy(fontSize = cappedSp(13f)), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                // Long names wrap to a second line toward the dot instead of
+                                // running across the radar; beyond two lines they end with "…".
+                                Text(row.target.name, style = Type.Caption.copy(fontSize = cappedSp(13f)), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                    textAlign = if (labelLeft) TextAlign.End else TextAlign.Start,
+                                    modifier = Modifier.widthIn(max = 112.dp),
                                     color = if (row.online) Archon.Paper else Archon.Muted)
                             }
                             if (labelLeft) { name(); Spacer(Modifier.width(6.dp)); Dot(statusColor(row)) }

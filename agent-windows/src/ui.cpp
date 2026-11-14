@@ -24,7 +24,7 @@ constexpr UINT WM_APP_CONTROLLERS = WM_APP + 4;
 constexpr UINT kTrayId = 1;
 
 // Archon palette (docs/design.md): ink, paper, pastel yellow accent.
-// Halo v2 tokens (.creative/direction.md).
+// Halo v2 tokens (docs/design.md).
 constexpr COLORREF kInk = RGB(0x00, 0x00, 0x00);
 constexpr COLORREF kSurface = RGB(0x11, 0x11, 0x11);
 constexpr COLORREF kRaised = RGB(0x1C, 0x1C, 0x1C);

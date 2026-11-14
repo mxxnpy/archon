@@ -36,7 +36,7 @@ de cada saída e indicador de nível ao vivo, em tempo real, na rede local.*
   only samples levels while a phone has the mixer open.
 
 Full wire contract: [`docs/protocol.md`](docs/protocol.md). Visual language:
-[`.creative/direction.md`](.creative/direction.md).
+[`docs/design.md`](docs/design.md).
 
 ## Repository layout
 

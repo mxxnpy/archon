@@ -10,6 +10,9 @@ add_executable(archon_tests
   adversarial/test_client_adv.cpp
   adversarial/test_concurrency_adv.cpp
   adversarial/test_codec_crypto_adv.cpp
+  # Platform-neutral parts of the macOS agent: tested on every OS.
+  ../../agent-macos/tests/test_portable.cpp
+  ../../agent-macos/src/portable.cpp
 )
 target_link_libraries(archon_tests PRIVATE archon_core)
 if(MSVC)
