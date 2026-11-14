@@ -44,6 +44,7 @@ final class CoreClient {
         var nApps = 0
         // 1.6
         var battery = -1  // wireless output battery 0..100, -1 = none
+    }
 
     static let featureInputs = UInt32(ARC_FEATURE_INPUTS)
     static let featureRouting = UInt32(ARC_FEATURE_ROUTING)

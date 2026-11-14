@@ -21,6 +21,7 @@ struct Endpoint: Identifiable, Equatable {
     var battery = -1            // wireless device battery 0..100 (-1 = none)
     /// "Fone Bluetooth · 80 %" when the device reports a battery.
     var label: String { battery >= 0 ? "\(name) · \(battery)%" : name }
+}
 
 struct Source: Identifiable, Equatable {
     let id: String
