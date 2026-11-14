@@ -40,7 +40,7 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
     private fun onEvent(
         type: Int, status: Int, error: Int, message: ByteArray?, id: ByteArray?, endpointId: ByteArray?,
         name: ByteArray?, iconKey: ByteArray?, pid: Int, volume: Int, flags: Int, meter: Int, data: ByteArray?,
-        route: ByteArray?, features: Int,
+        route: ByteArray?, features: Int, group: ByteArray?, detail: ByteArray?,
     ) {
         sink(
             CoreEvent(
@@ -51,6 +51,7 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
                 input = flags and 16 != 0, isDefaultInput = flags and 32 != 0, panic = flags and 64 != 0,
                 active = flags and 128 != 0,
                 route = route.s(), features = features,
+                tab = flags and 256 != 0, group = group.s(), detail = detail.s(),
             )
         )
     }
@@ -86,6 +87,7 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
         const val FEATURE_ROUTING = 2
         const val FEATURE_PANIC = 4
         const val FEATURE_STREAM = 8
+        const val FEATURE_TABS = 16
         const val DEFAULT_PORT = 47321
         const val SERVICE_TYPE = "_archon._tcp."
 
@@ -115,6 +117,8 @@ data class CoreEvent(
     val input: Boolean = false, val isDefaultInput: Boolean = false, val panic: Boolean = false,
     val route: String = "", val features: Int = 0,
     val active: Boolean = false,  // 1.3 STREAM_STATE
+    // 1.4: a browser tab (SOURCE)
+    val tab: Boolean = false, val group: String = "", val detail: String = "",
 ) {
     companion object {
         const val STATUS = 0

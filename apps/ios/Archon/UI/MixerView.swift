@@ -34,9 +34,22 @@ struct MixerView: View {
                                     .appear(i + 1)
                             }
                         }
-                        if model.currentSources.isEmpty {
+                        if model.currentSources.isEmpty && model.currentTabs.isEmpty {
                             Text("Nenhum app usando este dispositivo agora.").font(.archonCaption)
                                 .foregroundStyle(Archon.muted).padding(24)
+                        }
+                        if !model.currentTabs.isEmpty {
+                            // 1.4: tabs of the browser (Archon extension), below the apps.
+                            Text("Abas do navegador").font(.archonCaption).foregroundStyle(Archon.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4).padding(.top, 8)
+                                .accessibilityAddTraits(.isHeader)
+                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                                      spacing: 12) {
+                                ForEach(Array(model.currentTabs.enumerated()), id: \.element.id) { i, s in
+                                    AppCard(source: s, icon: model.icons[s.iconKey], level: 0)
+                                        .appear(model.currentSources.count + i + 1)
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal, 16).padding(.bottom, 24)
@@ -280,6 +293,7 @@ struct AppCard: View {
         if source.playing { s += String(localized: ", tocando") }
         if source.muted { s += String(localized: ", mudo") }
         if let out = routedName { s += String(localized: ", saída ") + out }
+        if source.tab { s += ", " + String(localized: "aba do \(source.group)") + ", " + source.detail }
         return s
     }
     @ScaledMetric(relativeTo: .title) private var pctSize: CGFloat = 26
@@ -323,9 +337,15 @@ struct AppCard: View {
                         Dot(color: Archon.ok, opacity: reduce ? 1 : 0.55 + 0.45 * min(max(level, 0), 1))
                             .animation(.linear(duration: 0.05), value: level)
                     }
-                    Text(name).font(.archonCaption).foregroundStyle(source.muted ? Archon.muted : Archon.paper).lineLimit(1)
+                    Text(name).font(.archonCaption).foregroundStyle(source.muted ? Archon.muted : Archon.paper)
+                        .lineLimit(source.tab ? 2 : 1).multilineTextAlignment(.center)
                 }
                 .padding(.horizontal, 14)
+                if source.tab && !source.detail.isEmpty {
+                    // The site, so two tabs with similar titles can be told apart.
+                    Text(source.detail).font(.archonCaption).foregroundStyle(Archon.muted).lineLimit(1)
+                        .padding(.horizontal, 14).padding(.top, -6)
+                }
                 if let out = routedName {
                     // Pinned to a specific output (long-press to change).
                     Text("→ \(out)").font(.archonCaption).foregroundStyle(Archon.muted).lineLimit(1)
@@ -351,7 +371,7 @@ struct AppCard: View {
         .background(Archon.surface, in: RoundedRectangle(cornerRadius: 24))
         .contentShape(RoundedRectangle(cornerRadius: 24))
         .contextMenu {
-            if model.canRoute && !source.system {
+            if model.canRoute && !source.system && !source.tab {  // a tab plays where its browser plays
                 Section("Saída deste app") {
                     Button { model.setRoute(source: source.id, endpoint: "") } label: {
                         if source.route.isEmpty { Label("Padrão do PC", systemImage: "checkmark") } else { Text("Padrão do PC") }

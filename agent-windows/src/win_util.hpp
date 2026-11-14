@@ -17,6 +17,8 @@ std::wstring to_wide(const std::string& s);
 // %APPDATA%\Archon (created on demand).
 std::wstring app_dir();
 std::wstring exe_path();
+// Atomic, durable file replace. 0 on success, else the Win32 error.
+DWORD write_file_atomic(const std::wstring& path, const std::string& data);
 
 bool dpapi_protect(const arc::Bytes& in, arc::Bytes& out);
 bool dpapi_unprotect(const arc::Bytes& in, arc::Bytes& out);

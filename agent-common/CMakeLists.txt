@@ -1,6 +1,6 @@
 # Pieces shared by the desktop agents (Windows, macOS): "listen on the phone"
-# streaming (Opus encode + sealed UDP). Not used by the phone apps, which decode
-# with the platform's own Opus decoder.
+# streaming (Opus encode + sealed UDP) and browser tabs as sources (1.4). Not
+# used by the phone apps, which decode with the platform's own Opus decoder.
 
 include(FetchContent)
 # libopus 1.5.2 (BSD-3-Clause), official Xiph release, pinned by hash.
@@ -21,7 +21,7 @@ if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
 endif()
 FetchContent_MakeAvailable(opus)
 
-add_library(archon_agent_common STATIC src/opus_streamer.cpp)
+add_library(archon_agent_common STATIC src/opus_streamer.cpp src/mini_json.cpp src/tab_sources.cpp)
 target_include_directories(archon_agent_common PUBLIC src)
 target_link_libraries(archon_agent_common PUBLIC archon_core opus)
 if(MSVC)
@@ -37,4 +37,11 @@ if(ARCHON_BUILD_TESTS)
     target_compile_options(archon_stream_tests PRIVATE /W4 /utf-8)
   endif()
   add_test(NAME archon_stream_tests COMMAND archon_stream_tests)
+
+  add_executable(archon_tab_tests tests/tab_tests.cpp ../core/tests/main.cpp)
+  target_link_libraries(archon_tab_tests PRIVATE archon_agent_common)
+  if(MSVC)
+    target_compile_options(archon_tab_tests PRIVATE /W4 /utf-8)
+  endif()
+  add_test(NAME archon_tab_tests COMMAND archon_tab_tests)
 endif()

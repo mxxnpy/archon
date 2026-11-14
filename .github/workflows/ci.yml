@@ -20,12 +20,23 @@ jobs:
         run: cmake --build build
       - name: Core tests
         run: ctest --test-dir build --output-on-failure
+      # Browser tabs bridge on real Windows: native-messaging host + per-user pipe + agent side.
+      - name: Browser tabs bridge e2e
+        run: build/agent-windows/tabs-e2e/Archon.exe
+      - name: Build browser extension
+        run: node browser-extension/build.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: archon-windows
           path: |
             build/agent-windows/Archon.exe
+            build/agent-windows/archon-tabs-host.exe
             build/archon-cli.exe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: archon-browser-extension
+          path: |
+            browser-extension/dist/*.zip
 
   linux:
     name: Core tests (Linux, ASan + UBSan)
@@ -127,7 +138,7 @@ jobs:
             sleep 4
             xcrun simctl io "$UDID" screenshot "shots/ios-$2.png"
           }
-          for s in computers pairing pairing-wrong mixer reconnecting notrecognized panic listen; do shoot "$s" "$s"; done
+          for s in computers pairing pairing-wrong mixer reconnecting notrecognized panic listen tabs; do shoot "$s" "$s"; done
           xcrun simctl ui "$UDID" content_size accessibility-extra-large
           for s in computers mixer pairing; do shoot "$s" "$s-axl"; done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

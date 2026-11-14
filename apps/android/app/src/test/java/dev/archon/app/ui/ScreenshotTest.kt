@@ -145,6 +145,20 @@ class ScreenshotTest {
         listening.value = true
     })
 
+    // 1.4: browser tabs below the apps (two apps so the tabs are on screen).
+    @Test fun mixerTabs() = shoot("3g-mixer-tabs", mixerUi().apply {
+        val apps = link.value.sources.filterKeys { it == "s1" || it == "s2" }
+        val tabs = listOf(
+            Source("t1", "e1", "lofi hip hop radio - beats to relax/study to", "", 6000, false, true, false,
+                tab = true, group = "Brave", detail = "youtube.com"),
+            Source("t2", "e1", "Podcast - Episódio 42", "", 10000, false, true, false,
+                tab = true, group = "Brave", detail = "open.spotify.com"),
+            Source("t3", "e1", "Reunião da equipe", "", 8000, true, false, false,
+                tab = true, group = "Brave", detail = "meet.google.com"),
+        ).associateBy { it.id }
+        link.value = link.value.copy(features = link.value.features or NativeClient.FEATURE_TABS, sources = apps + tabs)
+    })
+
     @Test fun mixerReconnecting() = shoot("3b-mixer-connecting", FakeUi().apply {
         screen.value = Screen.Mixer(pc)
         link.value = LinkState(status = LinkStatus.RECONNECTING)

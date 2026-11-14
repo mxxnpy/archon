@@ -188,11 +188,12 @@ Bytes encode_endpoint(const EndpointInfo& e) {
 
 Bytes encode_source(const SourceInfo& s) {
     Writer w;
-    uint8_t flags = (s.muted ? 1 : 0) | (s.playing ? 2 : 0) | (s.system_sounds ? 4 : 0);
+    uint8_t flags = (s.muted ? 1 : 0) | (s.playing ? 2 : 0) | (s.system_sounds ? 4 : 0) | (s.tab ? 8 : 0);
     w.u8(uint8_t(MsgType::Source)).str(s.id, kMaxId).str(s.endpoint_id, kMaxId);
     w.str(s.name, kMaxDisplayName).str(s.icon_key, kMaxIconKey).u32(s.pid).u8(flags);
     w.u16(clamp_volume(s.volume)).u16(s.meter);
     w.str(s.route, kMaxId);  // 1.2
+    w.str(s.group, kMaxGroup).str(s.detail, kMaxDetail);  // 1.4
     return w.take();
 }
 
@@ -309,8 +310,11 @@ bool decode_source(Reader& r, SourceInfo& s) {
     s.muted = flags & 1;
     s.playing = flags & 2;
     s.system_sounds = flags & 4;
+    s.tab = flags & 8;  // 1.4
     s.meter = r.remaining() >= 2 ? r.u16() : 0;
     s.route = r.remaining() > 0 ? r.str(kMaxId) : std::string();  // 1.2
+    s.group = r.remaining() > 0 ? r.str(kMaxGroup) : std::string();   // 1.4
+    s.detail = r.remaining() > 0 ? r.str(kMaxDetail) : std::string();
     return r.ok();
 }
 

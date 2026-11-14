@@ -37,6 +37,8 @@
     <string name="default_device">padrão</string>
     <string name="system_sounds">Sons do sistema</string>
     <string name="no_sources">Nenhum app usando este dispositivo agora.</string>
+    <string name="browser_tabs">Abas do navegador</string>
+    <string name="a11y_tab_of">aba do %1$s</string>
     <string name="forget_pc">Esquecer computador</string>
     <string name="forget_pc_body">%1$s vai precisar de um novo código para parear. Para revogar também no PC, use Dispositivos pareados na bandeja.</string>
     <string name="forget">Esquecer</string>

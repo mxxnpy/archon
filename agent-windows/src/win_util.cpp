@@ -118,7 +118,7 @@ bool dpapi_unprotect(const arc::Bytes& in, arc::Bytes& out) {
 // truncated or zero-filled agent.cfg (losing it would change the agent id and
 // every phone would have to pair again).
 // Returns 0 on success, otherwise the Win32 error code.
-static DWORD write_file_atomic(const std::wstring& path, const std::string& data) {
+DWORD write_file_atomic(const std::wstring& path, const std::string& data) {
     const std::wstring tmp = path + L".tmp";
     HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return GetLastError();

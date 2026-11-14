@@ -535,8 +535,11 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
     val outputs = link.outputs
     val endpoint = link.endpoints[selected]?.takeIf { !it.input } ?: outputs.firstOrNull()
     val mic = link.microphone
-    val sources = link.sources.values.filter { it.endpointId == endpoint?.id }
+    val sources = link.sources.values.filter { it.endpointId == endpoint?.id && !it.tab }
         .sortedWith(compareBy<Source> { it.system }.thenByDescending { it.playing }.thenBy { it.name.lowercase() })
+    // 1.4: browser tabs (Archon extension) on this output, below the apps.
+    val tabs = link.sources.values.filter { it.endpointId == endpoint?.id && it.tab }
+        .sortedWith(compareByDescending<Source> { it.playing }.thenBy { it.group }.thenBy { it.name.lowercase() })
 
     Column(Modifier.fillMaxSize()) {
         // Top bar: back · device ▾ · connection dot · more
@@ -684,9 +687,16 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
                 AppCard(s, icons[s.iconKey], levels[s.meter] ?: 0f, reduce, vm, Modifier.appear(i + 1, reduce),
                     outputs = if (link.canRoute && !s.system) outputs else emptyList())
             }
-            if (sources.isEmpty()) item(span = { GridItemSpan(2) }) {
+            if (sources.isEmpty() && tabs.isEmpty()) item(span = { GridItemSpan(2) }) {
                 Text(stringResource(R.string.no_sources), style = Type.Caption, color = Archon.Muted,
                     textAlign = TextAlign.Center, modifier = Modifier.padding(24.dp))
+            }
+            if (tabs.isNotEmpty()) item(span = { GridItemSpan(2) }, key = "tabs-header") {
+                Text(stringResource(R.string.browser_tabs), style = Type.Caption, color = Archon.Muted,
+                    modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 8.dp).semantics { heading() })
+            }
+            itemsIndexed(tabs, key = { _, s -> s.id }) { i, s ->
+                AppCard(s, icons[s.iconKey], 0f, reduce, vm, Modifier.appear(sources.size + i + 1, reduce))
             }
         }
         if (!live) {
@@ -794,6 +804,7 @@ private fun AppCard(
     val dotAlpha by animateFloatAsState(if (reduce) 1f else 0.55f + 0.45f * level.coerceIn(0f, 1f), tween(50), label = "lvl")
     val playing = stringResource(R.string.a11y_playing)
     val muted = stringResource(R.string.a11y_muted)
+    val tabOf = if (s.tab) stringResource(R.string.a11y_tab_of, s.group) else null
 
     Box(
         modifier.fillMaxWidth().background(Archon.Surface, RoundedCornerShape(24.dp))
@@ -809,7 +820,8 @@ private fun AppCard(
             .semantics {
                 contentDescription = name + (if (a11yExtra != null) ", $a11yExtra" else "") +
                     (if (s.playing) ", $playing" else "") + (if (s.muted) ", $muted" else "") +
-                    (if (routedTo != null) ", $outputLabel: $routedTo" else "")
+                    (if (routedTo != null) ", $outputLabel: $routedTo" else "") +
+                    (if (tabOf != null) ", $tabOf, ${s.detail}" else "")
                 stateDescription = "$pct%"
                 progressBarRangeInfo = ProgressBarRangeInfo(shown, 0f..1f)
                 setProgress { v -> vm.setVolume(endpointCard, s.id, (v * NativeClient.MAX_VOLUME).roundToInt()); true }
@@ -852,7 +864,12 @@ private fun AppCard(
                     Spacer(Modifier.width(6.dp))
                 }
                 Text(name, style = Type.Caption, color = if (s.muted) Archon.Muted else Archon.Paper,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    maxLines = if (s.tab) 2 else 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+            }
+            if (s.tab && s.detail.isNotEmpty()) {
+                // The site, so two tabs with similar titles can be told apart.
+                Text(s.detail, style = Type.Caption, color = Archon.Muted, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 14.dp))
             }
             if (routedTo != null) {
                 // Pinned to a specific output (long-press to change).

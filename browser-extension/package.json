@@ -1,0 +1,12 @@
+{
+  "name": "archon-tabs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Archon browser extension: per-tab volume controlled from the phone",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/"
+  }
+}

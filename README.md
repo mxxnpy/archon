@@ -46,6 +46,8 @@ Full wire contract: [`docs/protocol.md`](docs/protocol.md). Visual language:
 | `agent-windows/` | Windows tray agent (WASAPI backend, pairing popup, paired devices) |
 | `apps/android/` | Android app (Compose) |
 | `apps/ios/` | iOS app (SwiftUI, XcodeGen project) |
+| `agent-common/` | pieces shared by the desktop agents: Opus streaming, browser tabs bridge |
+| `browser-extension/` | Chrome / Edge / Brave / Firefox extension: volume per browser tab |
 | `tools/archon_cli.cpp` | command-line controller — handy for testing and as an ESP32 reference |
 
 ## Build
@@ -82,6 +84,20 @@ cd apps/ios && xcodegen generate && open Archon.xcodeproj
 ```
 
 Pick your team under *Signing & Capabilities* to install on an iPhone.
+
+**Browser extension** (volume per tab; Node 18+):
+
+```bash
+cd browser-extension && node build.mjs
+```
+
+Keep `archon-tabs-host.exe` next to `Archon.exe`: the agent registers it with
+Chrome, Edge, Brave, Chromium, Vivaldi and Firefox when it starts. Then load the
+extension: in Chrome/Edge/Brave open `chrome://extensions`, turn on *Developer
+mode*, *Load unpacked* → `browser-extension/dist/chromium`; in Firefox open
+`about:debugging` → *This Firefox* → *Load Temporary Add-on* →
+`browser-extension/dist/firefox/manifest.json`. Tabs that play sound show up
+on the phone under *Browser tabs*.
 
 **CLI controller:**
 

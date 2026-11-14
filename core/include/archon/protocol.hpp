@@ -21,6 +21,8 @@ constexpr size_t kMaxErrorText = 256;
 constexpr size_t kMaxId = 512;
 constexpr size_t kMaxDisplayName = 256;
 constexpr size_t kMaxIconKey = 128;
+constexpr size_t kMaxGroup = 64;     // 1.4: browser name of a tab
+constexpr size_t kMaxDetail = 256;   // 1.4: site of a tab
 constexpr size_t kMaxIconBytes = 48 * 1024;
 
 enum class MsgType : uint8_t {
@@ -121,11 +123,15 @@ struct SourceInfo {
     bool system_sounds = false;
     uint16_t meter = 0;  // level-meter slot assigned by the server (0 = none)
     std::string route;   // output this app is pinned to; empty = follows the default (1.2)
+    // 1.4: a browser tab (volume set inside the browser, mute = the tab's own mute).
+    bool tab = false;
+    std::string group;   // tab: browser name ("Brave")
+    std::string detail;  // tab: site ("youtube.com")
     bool operator==(const SourceInfo& o) const {
         return id == o.id && endpoint_id == o.endpoint_id && name == o.name &&
                icon_key == o.icon_key && pid == o.pid && volume == o.volume && muted == o.muted &&
                playing == o.playing && system_sounds == o.system_sounds && meter == o.meter &&
-               route == o.route;
+               route == o.route && tab == o.tab && group == o.group && detail == o.detail;
     }
     bool operator!=(const SourceInfo& o) const { return !(*this == o); }
 };
@@ -189,6 +195,7 @@ enum AgentFeature : uint32_t {
     kFeatureRouting = 1u << 1,
     kFeaturePanic = 1u << 2,
     kFeatureStream = 1u << 3,  // 1.3: listen to the PC on the phone
+    kFeatureTabs = 1u << 4,    // 1.4: browser tabs can appear as sources (extension bridge running)
 };
 
 // ---- 1.3: listening on the phone ------------------------------------------------

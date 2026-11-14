@@ -68,11 +68,11 @@ void on_event(void* user, const arc_event* e) {
     env->PushLocalFrame(16);
     const jint flags = (e->muted ? 1 : 0) | (e->is_default ? 2 : 0) | (e->playing ? 4 : 0) | (e->system_sounds ? 8 : 0) |
                        (e->input ? 16 : 0) | (e->is_default_input ? 32 : 0) | (e->panic ? 64 : 0) |
-                       (e->active ? 128 : 0);
+                       (e->active ? 128 : 0) | (e->tab ? 256 : 0);
     env->CallVoidMethod(h->target, g_on_event, jint(e->type), jint(e->status), jint(e->error), str(env, e->message),
                         str(env, e->id), str(env, e->endpoint_id), str(env, e->name), str(env, e->icon_key),
                         jint(e->pid), jint(e->volume), flags, jint(e->meter), bytes(env, e->data, e->data_len),
-                        str(env, e->route), jint(e->features));
+                        str(env, e->route), jint(e->features), str(env, e->group), str(env, e->detail));
     if (env->ExceptionCheck()) env->ExceptionClear();  // never unwind into native code
     env->PopLocalFrame(nullptr);
 }
@@ -90,7 +90,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
     jclass cls = env->FindClass("dev/archon/app/core/NativeClient");
     if (!cls) return JNI_ERR;
-    g_on_event = env->GetMethodID(cls, "onEvent", "(III[B[B[B[B[BIIII[B[BI)V");
+    g_on_event = env->GetMethodID(cls, "onEvent", "(III[B[B[B[B[BIIII[B[BI[B[B)V");
     g_on_audio = env->GetMethodID(cls, "onAudio", "([BJZ)V");
     return g_on_event && g_on_audio ? JNI_VERSION_1_6 : JNI_ERR;
 }

@@ -10,7 +10,10 @@
 #include "mdns.hpp"
 #include "ui.hpp"
 #include "loopback_stream.hpp"
+#include "tab_pipe.hpp"
+#include "tab_sources.hpp"
 #include "wasapi_backend.hpp"
+#include "win_proc.hpp"
 #include "win_util.hpp"
 
 using namespace agent;
@@ -49,7 +52,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     // Phones show this on the radar: the user's name is short and friendly;
     // the computer name stays in the devices window for manual connection.
     const std::wstring shown_name = display_name();
-    WasapiBackend backend;
+    WasapiBackend wasapi;
+    // Browser tabs (1.4) ride on top of the system mixer: tabs reported by the
+    // Archon extension become sources next to the apps.
+    TabSources backend(wasapi, [](uint32_t pid) { return to_utf8(process_image(pid)); });
+    TabPipeServer tab_pipe(backend);
+    {
+        std::string terr;
+        const bool tabs_ok = register_tabs_host(&terr) && tab_pipe.start(&terr);
+        backend.set_enabled(tabs_ok);
+        log_line(tabs_ok ? "browser tabs: ready for the extension" : "browser tabs unavailable: " + terr);
+    }
     LoopbackStreams streams;  // "listen on the phone"
     arc::ServerConfig scfg;
     scfg.agent_id = cfg.agent_id;
@@ -85,6 +98,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
 
     log_line("agent stopping");
     mdns.stop();
+    tab_pipe.stop();
     server->stop();
     streams.attach(nullptr);  // a capture thread must not report to a server being destroyed
     ui.destroy();

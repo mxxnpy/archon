@@ -30,12 +30,17 @@ final class CoreClient {
         var active = false
         var lost = false
         var seq: UInt64 = 0
+        // 1.4
+        var tab = false
+        var group = ""
+        var detail = ""
     }
 
     static let featureInputs = UInt32(ARC_FEATURE_INPUTS)
     static let featureRouting = UInt32(ARC_FEATURE_ROUTING)
     static let featurePanic = UInt32(ARC_FEATURE_PANIC)
     static let featureStream = UInt32(ARC_FEATURE_STREAM)
+    static let featureTabs = UInt32(ARC_FEATURE_TABS)
 
     static let maxVolume = Int(ARC_MAX_VOLUME)
     static let defaultPort = UInt16(ARC_DEFAULT_PORT)
@@ -137,6 +142,7 @@ final class CoreClient {
               data: e.data.map { Data(bytes: $0, count: e.data_len) },
               input: e.input != 0, isDefaultInput: e.is_default_input != 0, route: s(e.route),
               features: e.features, panic: e.panic != 0,
-              active: e.active != 0, lost: e.lost != 0, seq: e.seq)
+              active: e.active != 0, lost: e.lost != 0, seq: e.seq,
+              tab: e.tab != 0, group: s(e.group), detail: s(e.detail))
     }
 }

@@ -18,7 +18,7 @@ struct Bridge final : arc::ClientListener {
         arc_event e;
         std::memset(&e, 0, sizeof e);
         e.type = t;
-        e.message = e.id = e.endpoint_id = e.name = e.icon_key = e.route = "";
+        e.message = e.id = e.endpoint_id = e.name = e.icon_key = e.route = e.group = e.detail = "";
         return e;
     }
 
@@ -87,6 +87,9 @@ struct Bridge final : arc::ClientListener {
                 e.system_sounds = ev.source.system_sounds;
                 e.meter = ev.source.meter;
                 e.route = ev.source.route.c_str();
+                e.tab = ev.source.tab;
+                e.group = ev.source.group.c_str();
+                e.detail = ev.source.detail.c_str();
                 cb(user, &e);
                 return;
             }

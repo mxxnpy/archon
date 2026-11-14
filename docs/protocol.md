@@ -237,7 +237,7 @@ Volumes are `u16` in **0..10000** (0.00 % – 100.00 %). Ids are opaque strings
 | `0x40` | STATE_RESET | — controller clears its model |
 | `0x41` | ENDPOINT | `str id`, `str name` (≤ 256 B), `u8 flags` (bit0 default output, bit1 muted, bit2 input device, bit3 default input), `u16 volume`, `u16 meter_slot` — insert or replace |
 | `0x42` | ENDPOINT_REMOVED | `str id` |
-| `0x43` | SOURCE | `str id`, `str endpoint_id`, `str name` (≤ 256 B), `str icon_key` (≤ 128 B, empty = none), `u32 pid`, `u8 flags` (bit0 muted, bit1 playing now, bit2 system sounds), `u16 volume`, `u16 meter_slot`, `str route` (≤ 512 B; the output this app is pinned to, empty = follows the default; 1.2) — insert or replace |
+| `0x43` | SOURCE | `str id`, `str endpoint_id`, `str name` (≤ 256 B), `str icon_key` (≤ 128 B, empty = none), `u32 pid`, `u8 flags` (bit0 muted, bit1 playing now, bit2 system sounds, bit3 browser tab — 1.4), `u16 volume`, `u16 meter_slot`, `str route` (≤ 512 B; the output this app is pinned to, empty = follows the default; 1.2), `str group` (≤ 64 B; tab: browser name), `str detail` (≤ 256 B; tab: site) (1.4) — insert or replace |
 | `0x44` | SOURCE_REMOVED | `str id` |
 | `0x45` | STATE_SYNCED | — end of a full dump |
 | `0x46` | ICON | `str icon_key`, `u32 length`, PNG bytes (≤ 48 KiB) |
@@ -274,6 +274,7 @@ Volumes are `u16` in **0..10000** (0.00 % – 100.00 %). Ids are opaque strings
   | 1 | per-app output routing |
   | 2 | panic mute |
   | 3 | listening on the phone (1.3) |
+  | 4 | browser tabs as sources (1.4) |
 
   Controllers hide what the agent does not support. A 1.1 agent never sends
   AGENT_INFO: treat that as features = 0.
@@ -314,6 +315,32 @@ Feature bit 3 in AGENT_INFO announces it.
   mute is on (the output then stays muted and comes back when the panic ends),
   and never for an output the user had muted by hand.
 * Controllers keep a small jitter buffer (target ≈ 60 ms) and conceal gaps.
+
+### Browser tabs (added in 1.4, backward compatible)
+
+With the Archon browser extension installed, tabs that make sound appear as
+SOURCEs with flags bit3 set, next to the apps. Feature bit 4 in AGENT_INFO says
+the agent has the browser bridge installed (tabs may still be absent: no
+extension, or nothing playing).
+
+* `name` is the tab title, `group` the browser ("Brave"), `detail` the site
+  ("youtube.com"), `icon_key` the favicon (served by GET_ICON like app icons;
+  it changes when the favicon changes). `endpoint_id` is the output the
+  browser itself plays on (the default output when unknown), `meter_slot` 0.
+* SET_SOURCE_VOLUME sets the tab's own volume inside the browser, on top of
+  the site's player and of the browser's app volume (100 % = untouched).
+  SET_SOURCE_MUTE uses the browser's own tab mute. SET_SOURCE_ROUTE is ignored
+  for tabs: a tab plays where its browser plays.
+* Tab source ids start with `tab:` and change when the browser reconnects.
+  A tab that played in the last 5 minutes stays listed; closing it sends
+  SOURCE_REMOVED.
+* Controllers of 1.3 and older ignore bit3 and the two trailing strings and
+  show tabs as ordinary apps, whose volume and mute still work.
+
+On the PC, the extension talks to a native-messaging host
+(`archon-tabs-host.exe` beside `Archon.exe` on Windows) that relays to the
+agent over a pipe only the same user can open; the agent accepts only that
+host, and the host talks only to the agent beside it.
 
 ### Level meters (added in 1.1, backward compatible)
 

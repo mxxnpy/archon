@@ -21,7 +21,7 @@ struct Case {
     Bytes body;       // message body (after the type byte)
     Decoder decode;
     bool tolerant;    // Endpoint/Source/AgentInfo: trailing bytes allowed (later versions append)
-    size_t optional_tail = 0;  // bytes at the end older agents don't send (meter 1.1, route 1.2)
+    size_t optional_tail = 0;  // bytes at the end older agents don't send (meter 1.1, route 1.2, group+detail 1.4)
 };
 
 bool run_exact(const Bytes& b, const Decoder& d) {
@@ -74,7 +74,7 @@ std::vector<Case> cases() {
     s.name = "App";
     s.icon_key = "ik";
     s.meter = 9;
-    v.push_back({"source", body_of(encode_source(s)), [](Reader& r) { SourceInfo x; return decode_source(r, x); }, true, 4});
+    v.push_back({"source", body_of(encode_source(s)), [](Reader& r) { SourceInfo x; return decode_source(r, x); }, true, 8});
     AgentInfo ai{kFeatureInputs | kFeatureRouting, true, "windows"};
     v.push_back({"agent_info", body_of(encode_agent_info(ai)), [](Reader& r) { AgentInfo x; return decode_agent_info(r, x); }, true});
     v.push_back({"set_route", body_of(encode_set_route("S1", "E2")),

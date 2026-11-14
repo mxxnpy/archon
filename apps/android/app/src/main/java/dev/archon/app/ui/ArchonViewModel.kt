@@ -38,6 +38,8 @@ data class Source(
     val id: String, val endpointId: String, val name: String, val iconKey: String, val volume: Int,
     val muted: Boolean, val playing: Boolean, val system: Boolean, val meter: Int = 0,
     val route: String = "",  // output this app is pinned to ("" = follows the PC's default)
+    // 1.4: a browser tab (volume inside the browser; no output routing)
+    val tab: Boolean = false, val group: String = "", val detail: String = "",
 )
 
 data class LinkState(
@@ -310,7 +312,7 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
             CoreEvent.SOURCE -> {
                 _link.update {
                     it.copy(sources = it.sources + (e.id to Source(e.id, e.endpointId, e.name, e.iconKey, e.volume,
-                        e.muted, e.playing, e.systemSounds, e.meter, e.route)))
+                        e.muted, e.playing, e.systemSounds, e.meter, e.route, e.tab, e.group, e.detail)))
                 }
                 if (e.iconKey.isNotEmpty() && requestedIcons.add(e.iconKey)) client.requestIcon(e.iconKey)
             }

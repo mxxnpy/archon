@@ -98,12 +98,17 @@ typedef struct {
     uint8_t active;           /* STREAM_STATE */
     uint8_t lost;             /* AUDIO */
     uint64_t seq;             /* AUDIO */
+    /* 1.4 */
+    uint8_t tab;              /* SOURCE: a browser tab (no routing; mute = the tab's own mute) */
+    const char* group;        /* SOURCE (tab): browser name */
+    const char* detail;       /* SOURCE (tab): site */
 } arc_event;
 
 #define ARC_FEATURE_INPUTS 1u
 #define ARC_FEATURE_ROUTING 2u
 #define ARC_FEATURE_PANIC 4u
 #define ARC_FEATURE_STREAM 8u
+#define ARC_FEATURE_TABS 16u
 #define ARC_STREAM_MUTE_PC 1u
 
 typedef void (*arc_event_cb)(void* user, const arc_event* event);

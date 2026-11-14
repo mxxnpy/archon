@@ -35,3 +35,7 @@ Thumbs.db
 .vscode/
 .idea/
 
+
+# Browser extension build output
+browser-extension/dist/
+.playwright-mcp/

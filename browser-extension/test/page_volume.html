@@ -1,0 +1,86 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>page_volume.js check</title>
+<!-- Open in a browser (file:// is fine); results land in window.__results and
+     on the page. Checks the in-page volume hooks without the extension. -->
+<script>
+  // Captured before the hooks load, to see what the element really plays at
+  // and which nodes get wired to the speakers.
+  window.__nativeVolume = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "volume").get;
+  const realConnect = AudioNode.prototype.connect;
+  window.__toDestination = [];
+  AudioNode.prototype.connect = function (target, ...rest) {
+    if (target instanceof AudioDestinationNode) window.__toDestination.push(this);
+    return realConnect.call(this, target, ...rest);
+  };
+</script>
+<script src="../src/page_volume.js"></script>
+<pre id="out"></pre>
+<script>
+(async () => {
+  const results = [];
+  const check = (ok, what) => results.push((ok ? "PASS " : "FAIL ") + what);
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  const gain = (g) => window.postMessage({ __archon: "gain", value: g }, "*");
+  const tick = () => new Promise((r) => setTimeout(r, 30));
+  const played = (el) => window.__nativeVolume.call(el);
+
+  // <audio>: the site sees its own volume; the element plays site x tab gain.
+  const a = document.createElement("audio");
+  a.volume = 0.8;
+  a.play().catch(() => {}); // starts tracking (there is no source; playback itself may fail)
+  check(near(a.volume, 0.8) && near(played(a), 0.8), "gain 1: site value and played value match");
+  gain(0.5);
+  await tick();
+  check(near(a.volume, 0.8), "site still reads its own 0.8 (its slider does not jump)");
+  check(near(played(a), 0.4), "element plays at 0.8 x 0.5 = 0.4");
+  a.volume = 0.6;
+  check(near(a.volume, 0.6) && near(played(a), 0.3), "site changes volume: 0.6 x 0.5 = 0.3");
+  const b = document.createElement("video");
+  b.volume = 1;
+  b.play().catch(() => {});
+  check(near(played(b), 0.5), "an element that starts later gets the current tab gain");
+  try {
+    a.volume = 2;
+    check(false, "out-of-range volume throws like the browser");
+  } catch (e) {
+    check(e.name === "IndexSizeError", "out-of-range volume throws like the browser (" + e.name + ")");
+  }
+  gain(0);
+  await tick();
+  check(near(played(a), 0) && near(a.volume, 0.6), "gain 0 silences without touching the site's value");
+  gain(7); // bogus value from a page: clamped
+  await tick();
+  check(near(played(a), 0.6), "gain above 1 is clamped to 1");
+  window.postMessage({ __archon: "gain", value: 0.1 }, "*");
+  await tick();
+  check(near(played(a), 0.06), "gain message applied");
+
+  // Web Audio: whatever the site connects to the speakers goes through one master gain per context.
+  gain(0.4);
+  await tick();
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator();
+  const ret = osc.connect(ctx.destination);
+  check(ret === ctx.destination, "connect() returns what the site expects (chaining works)");
+  const masters = window.__toDestination.filter((n) => n.context === ctx);
+  check(masters.length === 1 && masters[0] instanceof GainNode, "exactly one node (the master gain) feeds the speakers");
+  check(near(masters[0].gain.value, 0.4), "the master starts at the tab gain (0.4)");
+  const osc2 = ctx.createOscillator();
+  osc2.connect(ctx.destination);
+  check(window.__toDestination.filter((n) => n.context === ctx).length === 1, "a second source reuses the same master");
+  let threw = false;
+  try {
+    osc2.disconnect(ctx.destination);
+    osc.disconnect();
+  } catch (e) {
+    threw = true;
+  }
+  check(!threw, "disconnect(destination) and disconnect() keep working");
+  gain(1);
+  await tick();
+
+  window.__results = results;
+  document.getElementById("out").textContent = results.join("\n");
+})();
+</script>

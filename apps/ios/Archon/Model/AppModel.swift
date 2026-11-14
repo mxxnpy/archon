@@ -31,6 +31,10 @@ struct Source: Identifiable, Equatable {
     var system: Bool
     var meter: Int
     var route = ""  // output this app is pinned to ("" = follows the PC's default)
+    // 1.4: a browser tab (volume inside the browser; no output routing)
+    var tab = false
+    var group = ""   // browser ("Brave")
+    var detail = ""  // site ("youtube.com")
 }
 
 struct PCRow: Identifiable, Equatable {
@@ -164,6 +168,18 @@ final class AppModel: ObservableObject {
             mixer(); status = .connected; panic = true
         case "listen":
             mixer(); status = .connected; listening = true
+        case "tabs":
+            mixer(); status = .connected
+            features |= CoreClient.featureTabs
+            sources = sources.filter { $0.key == "s1" || $0.key == "s2" }
+            for t in [
+                Source(id: "t1", endpointId: "e1", name: "lofi hip hop radio - beats to relax/study to", iconKey: "", volume: 6000,
+                       muted: false, playing: true, system: false, meter: 0, tab: true, group: "Brave", detail: "youtube.com"),
+                Source(id: "t2", endpointId: "e1", name: "Podcast - Episódio 42", iconKey: "", volume: 10000,
+                       muted: false, playing: true, system: false, meter: 0, tab: true, group: "Brave", detail: "open.spotify.com"),
+                Source(id: "t3", endpointId: "e1", name: "Reunião da equipe", iconKey: "", volume: 8000,
+                       muted: true, playing: false, system: false, meter: 0, tab: true, group: "Brave", detail: "meet.google.com"),
+            ] { sources[t.id] = t }
         case "notrecognized":
             screen = .mixer(pc); status = .failed; error = CoreErr.notRecognized
         default:
@@ -338,9 +354,19 @@ final class AppModel: ObservableObject {
 
     var currentSources: [Source] {
         guard let e = currentEndpoint else { return [] }
-        return sources.values.filter { $0.endpointId == e.id }.sorted {
+        return sources.values.filter { $0.endpointId == e.id && !$0.tab }.sorted {
             if $0.system != $1.system { return !$0.system }
             if $0.playing != $1.playing { return $0.playing }
+            return $0.name.lowercased() < $1.name.lowercased()
+        }
+    }
+
+    /// 1.4: browser tabs playing on the current output (playing first).
+    var currentTabs: [Source] {
+        guard let e = currentEndpoint else { return [] }
+        return sources.values.filter { $0.endpointId == e.id && $0.tab }.sorted {
+            if $0.playing != $1.playing { return $0.playing }
+            if $0.group != $1.group { return $0.group < $1.group }
             return $0.name.lowercased() < $1.name.lowercased()
         }
     }
@@ -402,7 +428,7 @@ final class AppModel: ObservableObject {
         case ARC_EV_SOURCE:
             sources[e.id] = Source(id: e.id, endpointId: e.endpointId, name: e.name, iconKey: e.iconKey, volume: e.volume,
                                    muted: e.muted, playing: e.playing, system: e.systemSounds, meter: Int(e.meter),
-                                   route: e.route)
+                                   route: e.route, tab: e.tab, group: e.group, detail: e.detail)
             if !e.iconKey.isEmpty, requestedIcons.insert(e.iconKey).inserted { client.requestIcon(e.iconKey) }
         case ARC_EV_SOURCE_REMOVED:
             sources[e.id] = nil
