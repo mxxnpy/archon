@@ -100,7 +100,8 @@ It sees exactly what a paired phone sees (through the agent's local view).
   system title bar in dark mode. Opened by clicking the tray icon (Windows), the
   menu bar item (macOS) or the app launcher (Linux); closing hides it, the agent
   keeps running.
-- **Grid**: 8 px. Window margins 24, gaps 16, top bar 64.
+- **Grid**: 8 px. Window margins 24, gaps between cards 16, between the master
+  column and the grid 24, top bar 64.
 - **Top bar** (64 px, controls 40 px high, centred): output pill (device name ▾, opens the output list) ·
   phones line (`ok` dot + "2 celulares conectados", or `muted` "Nenhum celular
   conectado") · right: **Perfis**, **Silenciar tudo** (panic, `error` fill when
@@ -122,7 +123,13 @@ It sees exactly what a paired phone sees (through the agent's local view).
   1 px `edge` outline (≥ 3:1, WCAG 1.4.11). The sheet is separated from the body
   by a 1 px `track` line; the body is not dimmed (no off-palette tints).
 - **Accent budget**: in a panel only the primary action is `accent`; "Aplicar"
-  is a quiet `track` button and the profile in force reads "Em uso" in `accent`.
+  is a quiet `track` button and the profile in force reads "Em uso" in `accent`,
+  with a 6 px `accent` dot hanging left of its name (the same mark as the
+  phone's "in use" dot).
+- **Narrow top bar**: the phones line shrinks to the phone glyph + count; the
+  screen reader still reads the full sentence.
+- **Card names**: one line with an ellipsis, also for browser tabs; the second
+  line is the output route, the device or the site.
 - **Mouse**: drag along a ring or horizontally on a card; the wheel over a ring
   or card changes ±5 % per notch (±1 % with Shift). The hover state brightens a
   card from `surface` to `raised`; nothing else moves.

@@ -170,6 +170,13 @@ void MixerWindow::open_named(const std::string& which) {
     if (which == "profiles") open_panel(Panel::Profiles);
     else if (which == "settings") open_panel(Panel::Settings);
     else if (which == "editor") edit_profile(nullptr);
+    else if (which == "editor-auto") {  // screenshots: an automatic profile with days, hours and network
+        edit_profile(nullptr);
+        editor_.p.automatic = true;
+        editor_.use_time = true;
+        editor_.p.days = 0b0111110;
+        invalidate();
+    }
     else close_panel();
 }
 
@@ -525,7 +532,8 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
         w.system = system;
         w.tab = tab;
         w.input = input;
-        const float cx = gx + float(col) * (cw + G);
+        // Whole-pixel widths; the leftover pixels go into the gaps, so both margins are equal.
+        const float cx = cols > 1 ? gx + std::round(float(col) * (gw - cw) / float(cols - 1)) : gx;
         w.r = D2D1::RectF(cx, y, cx + cw, y + kCardH);
         if (++col == cols) {
             col = 0;
@@ -847,7 +855,7 @@ void MixerWindow::layout_panel(float x0, float y0, float w, float h) {
              : browsers == 0 ? (pt_ ? L"Pronto. Nenhum navegador conectado ainda." : L"Ready. No browser connected yet.")
             : browsers == 1 ? (pt_ ? L"1 navegador conectado." : L"1 browser connected.")
                             : std::to_wstring(browsers) + (pt_ ? L" navegadores conectados." : L" browsers connected."),
-             40);
+             browsers < 0 ? 40.f : 22.f);
         button(Widget::Kind::SecondaryButton, "s:ext-help", pt_ ? L"Como instalar a extensão" : L"How to install the extension",
                [] {
                    ShellExecuteW(nullptr, L"open", L"https://github.com/mxxnpy/archon#build", nullptr, nullptr,
@@ -1098,7 +1106,7 @@ void MixerWindow::draw_widget(const Widget& w) {
             dw_->CreateTextLayout(w.name.c_str(), UINT32(w.name.size()), f_caption_.Get(), avail, 40, &name);
             float text_w = avail, name_h = 18, line1 = 9;
             if (name) {
-                name->SetWordWrapping(w.tab ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
+                name->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);  // one line; the full title is in the UIA name
                 name->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
                 name->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
                 DWRITE_TRIMMING trim{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};

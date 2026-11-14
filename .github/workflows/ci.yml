@@ -41,6 +41,7 @@ jobs:
           shot @("--shot", "shots/win-narrow.png", "--size", "420x760")
           shot @("--shot", "shots/win-profiles.png", "--panel", "profiles")
           shot @("--shot", "shots/win-editor.png", "--panel", "editor")
+          shot @("--shot", "shots/win-editor-auto.png", "--panel", "editor-auto")
           shot @("--shot", "shots/win-settings.png", "--panel", "settings")
           shot @("--shot", "shots/win-focus.png", "--focus", "3")
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
