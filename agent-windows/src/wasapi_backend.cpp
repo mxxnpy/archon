@@ -15,6 +15,7 @@
 #include <future>
 #include <set>
 
+#include "app_routing.hpp"
 #include "archon/crypto.hpp"
 #include "win_util.hpp"
 
@@ -70,7 +71,7 @@ public:
     HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override { return dirty(); }
     HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override { return dirty(); }
     HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole, LPCWSTR) override {
-        return flow == eRender ? dirty() : S_OK;
+        return (flow == eRender || flow == eCapture) ? dirty() : S_OK;
     }
     HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY key) override {
         // Fires often for unrelated properties; only names matter to us.
@@ -134,6 +135,7 @@ struct SessionEntry {
 struct EndpointEntry {
     std::string id;
     std::string name;
+    bool input = false;  // capture device (microphone): no sessions
     ComPtr<IMMDevice> dev;
     ComPtr<IAudioEndpointVolume> vol;
     EndpointCallback* vol_cb = nullptr;
@@ -147,6 +149,8 @@ struct ProcInfo {
     std::string name;
     std::wstring path;
     std::string icon_key;
+    std::string route;  // output the app is pinned to ("" = default)
+    bool route_read = false;
 };
 
 void release_session(SessionEntry& s) {
@@ -160,7 +164,7 @@ void release_session(SessionEntry& s) {
 void release_endpoint(EndpointEntry& e) {
     for (auto& [k, s] : e.sessions) release_session(s);
     e.sessions.clear();
-    if (e.notifier) {
+    if (e.notifier && e.mgr) {
         e.mgr->UnregisterSessionNotification(e.notifier);
         e.notifier->Release();
         e.notifier = nullptr;
@@ -255,7 +259,9 @@ struct WasapiBackend::State {
     DeviceNotifier* device_notifier = nullptr;
     std::map<std::string, EndpointEntry> endpoints;
     std::string default_id;
+    std::string default_input_id;
     std::map<DWORD, ProcInfo> procs;
+    std::unique_ptr<AppRouting> routing;
 };
 
 WasapiBackend::WasapiBackend() { wake_ = CreateEventW(nullptr, FALSE, FALSE, nullptr); }
@@ -318,6 +324,8 @@ void WasapiBackend::run(std::promise<std::string>* started) {
         CoUninitialize();
         return;
     }
+    st_->routing = std::make_unique<AppRouting>();
+    routing_ok_ = st_->routing->available();
     st_->device_notifier = new DeviceNotifier(this);
     st_->enumerator->RegisterEndpointNotificationCallback(st_->device_notifier);
     // Report the full current state before declaring success.
@@ -362,15 +370,17 @@ void WasapiBackend::run(std::promise<std::string>* started) {
     st_->endpoints.clear();
     st_->enumerator->UnregisterEndpointNotificationCallback(st_->device_notifier);
     st_->device_notifier->Release();
+    st_->routing.reset();  // COM object: release on this (COM) thread
     st_.reset();
     CoUninitialize();
 }
 
 void WasapiBackend::refresh_devices() {
     State& s = *st_;
-    ComPtr<IMMDeviceCollection> coll;
     std::set<std::string> present;
-    if (SUCCEEDED(s.enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &coll))) {
+    for (EDataFlow flow : {eRender, eCapture}) {
+        ComPtr<IMMDeviceCollection> coll;
+        if (FAILED(s.enumerator->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &coll))) continue;
         UINT count = 0;
         coll->GetCount(&count);
         for (UINT i = 0; i < count; ++i) {
@@ -389,12 +399,17 @@ void WasapiBackend::refresh_devices() {
             e.id = id;
             e.dev = dev;
             e.name = device_name(dev.Get());
+            e.input = flow == eCapture;
             if (FAILED(dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, &e.vol))) continue;
-            if (FAILED(dev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, &e.mgr))) continue;
+            // Apps are listed per output; microphones only need volume, mute and a meter.
+            if (!e.input && FAILED(dev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, &e.mgr)))
+                continue;
             e.vol_cb = new EndpointCallback(this);
             e.vol->RegisterControlChangeNotify(e.vol_cb);
-            e.notifier = new SessionNotifier(this);
-            e.mgr->RegisterSessionNotification(e.notifier);
+            if (e.mgr) {
+                e.notifier = new SessionNotifier(this);
+                e.mgr->RegisterSessionNotification(e.notifier);
+            }
             s.endpoints.emplace(id, std::move(e));
         }
     }
@@ -406,21 +421,27 @@ void WasapiBackend::refresh_devices() {
         release_endpoint(it->second);
         it = s.endpoints.erase(it);
     }
-    s.default_id.clear();
-    ComPtr<IMMDevice> def;
-    if (SUCCEEDED(s.enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &def))) {
-        LPWSTR wid = nullptr;
-        if (SUCCEEDED(def->GetId(&wid))) {
-            s.default_id = to_utf8(wid);
-            CoTaskMemFree(wid);
+    auto default_of = [&](EDataFlow flow) {
+        std::string out;
+        ComPtr<IMMDevice> def;
+        if (SUCCEEDED(s.enumerator->GetDefaultAudioEndpoint(flow, eConsole, &def))) {
+            LPWSTR wid = nullptr;
+            if (SUCCEEDED(def->GetId(&wid))) {
+                out = to_utf8(wid);
+                CoTaskMemFree(wid);
+            }
         }
-    }
+        return out;
+    };
+    s.default_id = default_of(eRender);
+    s.default_input_id = default_of(eCapture);
 }
 
 void WasapiBackend::refresh_sessions() {
     State& s = *st_;
     std::set<DWORD> live_pids;
     for (auto& [eid, e] : s.endpoints) {
+        if (!e.mgr) continue;  // microphones: no app sessions
         ComPtr<IAudioSessionEnumerator> en;
         std::set<std::wstring> seen;
         // Enumerating also arms OnSessionCreated notifications (documented quirk).
@@ -476,7 +497,9 @@ void WasapiBackend::publish() {
         arc::EndpointInfo info;
         info.id = eid;
         info.name = e.name;
-        info.is_default = eid == s.default_id;
+        info.input = e.input;
+        info.is_default = !e.input && eid == s.default_id;
+        info.is_default_input = e.input && eid == s.default_input_id;
         float scalar = 0;
         BOOL mute = FALSE;
         e.vol->GetMasterVolumeLevelScalar(&scalar);
@@ -510,6 +533,11 @@ void WasapiBackend::publish() {
                     const std::string display = session_display_name(se.ctl.Get());
                     src.name = display.empty() ? pit->second.name : display;
                     src.icon_key = pit->second.icon_key;
+                    if (!pit->second.route_read && s.routing) {
+                        pit->second.route = to_utf8(s.routing->get(se.pid));
+                        pit->second.route_read = true;
+                    }
+                    src.route = pit->second.route;
                     if (!src.icon_key.empty()) {
                         std::lock_guard<std::mutex> lk(icon_mu_);
                         icon_paths_[src.icon_key] = pit->second.path;
@@ -607,6 +635,33 @@ bool WasapiBackend::icon_png(const std::string& key, arc::Bytes& png) {
     std::lock_guard<std::mutex> lk(icon_mu_);
     icon_cache_[key] = png;
     return !png.empty();
+}
+
+void WasapiBackend::set_source_route(const std::string& id, const std::string& endpoint_id) {
+    post([this, id, endpoint_id] {
+        if (!st_->routing || !st_->routing->available()) return;
+        DWORD pid = 0;
+        for (auto& [eid, e] : st_->endpoints)
+            for (auto& [k, se] : e.sessions)
+                if (se.source_id == id && !se.system) pid = se.pid;
+        if (!pid) return;  // system sounds follow the default output
+        if (!st_->routing->set(pid, to_wide(endpoint_id))) {
+            log_line("could not route " + id + " (error " + std::to_string(st_->routing->last_error()) + ")");
+            return;
+        }
+        auto pit = st_->procs.find(pid);
+        if (pit != st_->procs.end()) {
+            pit->second.route = endpoint_id;
+            pit->second.route_read = true;
+        }
+        // The session moves to the new device shortly after; refresh now and
+        // again when Windows reports the new session.
+        sessions_dirty_ = true;
+    });
+}
+
+uint32_t WasapiBackend::features() const {
+    return arc::kFeatureInputs | (routing_ok_ ? arc::kFeatureRouting : 0u);
 }
 
 void WasapiBackend::set_metering(bool on) {

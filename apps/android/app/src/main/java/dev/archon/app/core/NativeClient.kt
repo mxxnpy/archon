@@ -19,6 +19,10 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
     fun requestIcon(key: String) = nativeRequestIcon(handle, key.toByteArray())
     fun refresh() = nativeRefresh(handle)
     fun setMeters(on: Boolean) = nativeSetMeters(handle, on)
+    /** Send an app to an output ("" = follow the PC's default). */
+    fun setRoute(source: String, endpoint: String) = nativeSetRoute(handle, source.toByteArray(), endpoint.toByteArray())
+    /** Mute everything on the PC / undo. Sent once the link is up if called right after resume(). */
+    fun panicMute(on: Boolean) = nativePanic(handle, on)
 
     override fun close() {
         val h = handle
@@ -31,6 +35,7 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
     private fun onEvent(
         type: Int, status: Int, error: Int, message: ByteArray?, id: ByteArray?, endpointId: ByteArray?,
         name: ByteArray?, iconKey: ByteArray?, pid: Int, volume: Int, flags: Int, meter: Int, data: ByteArray?,
+        route: ByteArray?, features: Int,
     ) {
         sink(
             CoreEvent(
@@ -38,6 +43,8 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
                 endpointId = endpointId.s(), name = name.s(), iconKey = iconKey.s(), pid = pid, volume = volume,
                 muted = flags and 1 != 0, isDefault = flags and 2 != 0, playing = flags and 4 != 0,
                 systemSounds = flags and 8 != 0, meter = meter, data = data,
+                input = flags and 16 != 0, isDefaultInput = flags and 32 != 0, panic = flags and 64 != 0,
+                route = route.s(), features = features,
             )
         )
     }
@@ -56,9 +63,14 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
     private external fun nativeRequestIcon(handle: Long, key: ByteArray)
     private external fun nativeRefresh(handle: Long)
     private external fun nativeSetMeters(handle: Long, on: Boolean)
+    private external fun nativeSetRoute(handle: Long, source: ByteArray, endpoint: ByteArray)
+    private external fun nativePanic(handle: Long, on: Boolean)
 
     companion object {
         const val MAX_VOLUME = 10000
+        const val FEATURE_INPUTS = 1
+        const val FEATURE_ROUTING = 2
+        const val FEATURE_PANIC = 4
         const val DEFAULT_PORT = 47321
         const val SERVICE_TYPE = "_archon._tcp."
 
@@ -84,6 +96,9 @@ data class CoreEvent(
     val type: Int, val status: Int, val error: Int, val message: String, val id: String, val endpointId: String,
     val name: String, val iconKey: String, val pid: Int, val volume: Int, val muted: Boolean, val isDefault: Boolean,
     val playing: Boolean, val systemSounds: Boolean, val meter: Int, val data: ByteArray?,
+    // 1.2
+    val input: Boolean = false, val isDefaultInput: Boolean = false, val panic: Boolean = false,
+    val route: String = "", val features: Int = 0,
 ) {
     companion object {
         const val STATUS = 0
@@ -96,6 +111,7 @@ data class CoreEvent(
         const val STATE_SYNCED = 7
         const val ICON = 8
         const val METERS = 9
+        const val AGENT_INFO = 10
     }
 }
 

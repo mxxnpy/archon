@@ -34,6 +34,9 @@ public:
     void set_source_mute(const std::string& id, bool muted) override;
     bool icon_png(const std::string& key, arc::Bytes& png) override;
     void set_metering(bool on) override;
+    void set_source_route(const std::string& source_id, const std::string& endpoint_id) override;
+    uint32_t features() const override;
+    std::string os_name() const override { return "windows"; }
 
     // Called from COM notification threads.
     void mark_devices_dirty();
@@ -56,6 +59,7 @@ private:
     std::atomic<bool> devices_dirty_{true};
     std::atomic<bool> sessions_dirty_{true};
     std::atomic<bool> metering_{false};
+    std::atomic<bool> routing_ok_{false};
     bool meters_were_silent_ = true;
 
     std::mutex mu_;

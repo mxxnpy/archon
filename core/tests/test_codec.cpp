@@ -91,16 +91,17 @@ TEST(meters_roundtrip_and_legacy_source_without_slot) {
     REQUIRE(out.size() == 3);
     CHECK(out[2].slot == 65535 && out[2].level == 255 && out[1].level == 128);
 
-    // A 1.0 agent sends SOURCE without the trailing meter slot: still decodes.
+    // A 1.0 agent sends SOURCE without the trailing meter slot (nor the 1.2
+    // route): still decodes.
     SourceInfo s;
     s.id = "x";
     s.meter = 7;
     b = encode_source(s);
-    b.resize(b.size() - 2);
+    b.resize(b.size() - 4);  // empty route str (2) + meter (2)
     Reader r2 = body(b);
     SourceInfo d;
     REQUIRE(decode_source(r2, d));
-    CHECK(d.meter == 0 && d.id == "x");
+    CHECK(d.meter == 0 && d.id == "x" && d.route.empty());
 }
 
 TEST(volume_is_clamped) {

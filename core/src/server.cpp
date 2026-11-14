@@ -77,6 +77,11 @@ struct Server::Impl {
     uint16_t next_slot = 1;
     bool metering = false;
 
+    // Panic mute: devices this agent muted, so turning it off restores only those.
+    bool panic = false;
+    std::set<std::string> panic_muted;
+    Clock::time_point panic_at{};
+
     // Pairing policy
     uint64_t pairing_conn = 0;
     std::deque<Clock::time_point> failures;
@@ -139,8 +144,39 @@ struct Server::Impl {
         for (auto& [id, c] : conns) queue_app(*c, msg);
     }
 
+    AgentInfo agent_info() const {
+        AgentInfo a;
+        a.features = s.backend_.features() | kFeaturePanic;
+        a.panic = panic;
+        a.os = s.backend_.os_name();
+        return a;
+    }
+
+    void set_panic(bool on) {
+        if (on) {
+            for (auto& [id, e] : endpoints) {
+                if (e.muted || panic_muted.count(id)) continue;
+                s.backend_.set_endpoint_mute(id, true);
+                panic_muted.insert(id);
+            }
+            panic_at = Clock::now();
+        } else {
+            for (const std::string& id : panic_muted) {
+                auto it = endpoints.find(id);
+                if (it != endpoints.end() && it->second.muted) s.backend_.set_endpoint_mute(id, false);
+            }
+            panic_muted.clear();
+        }
+        if (panic == on) return;
+        panic = on;
+        broadcast(encode_agent_info(agent_info()));
+        s.observer_.on_panic_changed(on);
+        log(on ? "panic mute on" : "panic mute off");
+    }
+
     void send_dump(Conn& c) {
         queue_app(c, encode_simple(MsgType::StateReset));
+        queue_app(c, encode_agent_info(agent_info()));
         for (auto& [id, e] : endpoints) queue_app(c, encode_endpoint(e));
         for (auto& [id, src] : sources) queue_app(c, encode_source(src));
         queue_app(c, encode_simple(MsgType::StateSynced));
@@ -436,6 +472,22 @@ struct Server::Impl {
                 if (!decode_flag(r, on)) return;
                 c.meters = on;
                 update_metering();
+                return;
+            }
+            case MsgType::SetSourceRoute: {
+                std::string endpoint;
+                if (!decode_set_route(r, id, endpoint)) return;
+                if (!(s.backend_.features() & kFeatureRouting) || !sources.count(id)) return;
+                if (!endpoint.empty()) {
+                    auto it = endpoints.find(endpoint);
+                    if (it == endpoints.end() || it->second.input) return;  // outputs only
+                }
+                s.backend_.set_source_route(id, endpoint);
+                return;
+            }
+            case MsgType::PanicMute: {
+                bool on = false;
+                if (decode_flag(r, on)) set_panic(on);
                 return;
             }
             default:
@@ -764,6 +816,10 @@ void Server::revoke(const Id16& controller_id) {
     });
 }
 
+void Server::panic_mute(bool on) {
+    post([this, on] { impl_->set_panic(on); });
+}
+
 void Server::reset_pairing_lockout() {
     post([this] {
         // Lift the current lock but keep the escalation count: if an attacker is
@@ -781,6 +837,10 @@ void Server::endpoint_upsert(const EndpointInfo& e) {
         e.meter = impl_->slot_for(e.id);
         auto it = impl_->endpoints.find(e.id);
         if (it != impl_->endpoints.end() && it->second == e) return;
+        // Unmuted by hand during a panic: forget it (PANIC_MUTE 0 must not touch
+        // it again). Reports racing our own mute right after the panic are ignored.
+        if (!e.muted && impl_->panic_muted.count(e.id) && Clock::now() - impl_->panic_at > std::chrono::seconds(1))
+            impl_->panic_muted.erase(e.id);
         impl_->endpoints[e.id] = e;
         impl_->broadcast(encode_endpoint(e));
     });

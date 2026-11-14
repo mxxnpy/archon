@@ -69,6 +69,10 @@ void Client::start(std::vector<std::pair<std::string, uint16_t>> addrs, Mode mod
     attempt_ = 0;
     refused_.assign(addrs_.size(), ErrorCode::None);
     mode_ = mode;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        pending_panic_.reset();
+    }
     if (record) record_ = *record;
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -131,6 +135,20 @@ void Client::set_source_volume(const std::string& id, uint16_t v) {
 }
 void Client::set_source_mute(const std::string& id, bool m) {
     enqueue(MsgType::SetSourceMute, id, encode_set_mute(MsgType::SetSourceMute, id, m), true);
+}
+void Client::set_source_route(const std::string& id, const std::string& endpoint) {
+    enqueue(MsgType::SetSourceRoute, id, encode_set_route(id, endpoint), true);
+}
+void Client::panic_mute(bool on) {
+    if (live_) {
+        enqueue(MsgType::PanicMute, {}, encode_flag(MsgType::PanicMute, on), true);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        pending_panic_ = on;  // sent on the next Ready, then forgotten
+    }
+    waker_.wake();
 }
 void Client::request_icon(const std::string& key) {
     enqueue(MsgType::GetIcon, key, encode_id(MsgType::GetIcon, key), true);
@@ -224,6 +242,13 @@ bool Client::run_connection(bool& ever_ready) {
                     refused_.assign(addrs_.size(), ErrorCode::None);
                     // Re-subscribe on every (re)connection: the agent forgets per link.
                     if (meters_) append_frame(out, session.app(encode_flag(MsgType::SetMeters, true)));
+                    {
+                        std::lock_guard<std::mutex> lk(mu_);
+                        if (pending_panic_) {
+                            append_frame(out, session.app(encode_flag(MsgType::PanicMute, *pending_panic_)));
+                            pending_panic_.reset();
+                        }
+                    }
                     status(ClientStatus::Connected, ErrorCode::None, host + "|" + std::to_string(port));
                     break;
                 case ControllerEvent::Kind::Error:

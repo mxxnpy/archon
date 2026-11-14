@@ -29,6 +29,7 @@ public:
     void on_controllers_changed(const std::vector<arc::ConnectedController>& now) override;
     void on_log(const std::string& line) override;
     void on_pairing_lockout(int lockouts, int64_t locked_until_unix) override;
+    void on_panic_changed(bool active) override;
 
     void show_error(const std::wstring& text);
 
@@ -66,6 +67,8 @@ private:
     HICON icon_large_ = nullptr;
     UINT taskbar_created_ = 0;
     bool first_run_ = false;
+    bool panic_ = false;     // everything muted by the panic mute
+    bool hotkey_ok_ = false;  // Ctrl+Alt+M registered
 
     arc::Server* server_ = nullptr;
     arc::TrustStore* store_ = nullptr;

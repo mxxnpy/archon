@@ -16,6 +16,8 @@ struct Endpoint: Identifiable, Equatable {
     var muted: Bool
     var isDefault: Bool
     var meter: Int
+    var input = false           // microphone
+    var isDefaultInput = false  // the PC's default microphone
 }
 
 struct Source: Identifiable, Equatable {
@@ -28,6 +30,7 @@ struct Source: Identifiable, Equatable {
     var playing: Bool
     var system: Bool
     var meter: Int
+    var route = ""  // output this app is pinned to ("" = follows the PC's default)
 }
 
 struct PCRow: Identifiable, Equatable {
@@ -68,6 +71,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var icons: [String: UIImage] = [:]
     @Published private(set) var levels: [Int: Double] = [:]
     @Published var selectedEndpoint: String?
+    /// What the connected PC supports (AGENT_INFO); 0 until it says.
+    @Published private(set) var features: UInt32 = 0
+    /// Everything on the PC muted by the panic mute.
+    @Published private(set) var panic = false
     @Published var pairingRemovedNotice = false
     @Published private(set) var paired: [PairedPC] = [] {
         didSet { discovery.pinned = Set(paired.map(\.agentId)) }
@@ -106,16 +113,23 @@ final class AppModel: ObservableObject {
             PCRow(target: Target(agentId: String(repeating: "c", count: 32), name: "ESTUDIO-PC", host: "192.168.0.31", port: 47321), paired: false, online: true),
         ]
         func mixer() {
-            endpoints = ["e1": Endpoint(id: "e1", name: "SteelSeries Sonar - Gaming", volume: 6400, muted: false, isDefault: true, meter: 1)]
+            endpoints = [
+                "e1": Endpoint(id: "e1", name: "SteelSeries Sonar - Gaming", volume: 6400, muted: false, isDefault: true, meter: 1),
+                "e2": Endpoint(id: "e2", name: "Fone Bluetooth", volume: 5000, muted: false, isDefault: false, meter: 7),
+                "m1": Endpoint(id: "m1", name: "Microfone (USB)", volume: 7500, muted: false, isDefault: false, meter: 8,
+                               input: true, isDefaultInput: true),
+            ]
+            features = CoreClient.featureInputs | CoreClient.featureRouting | CoreClient.featurePanic
             let list = [
                 Source(id: "s1", endpointId: "e1", name: "Spotify", iconKey: "", volume: 7200, muted: false, playing: true, system: false, meter: 2),
-                Source(id: "s2", endpointId: "e1", name: "Discord", iconKey: "", volume: 8000, muted: false, playing: true, system: false, meter: 3),
+                Source(id: "s2", endpointId: "e1", name: "Discord", iconKey: "", volume: 8000, muted: false, playing: true, system: false, meter: 3,
+                       route: "e1"),
                 Source(id: "s3", endpointId: "e1", name: "Counter-Strike 2", iconKey: "", volume: 5800, muted: false, playing: false, system: false, meter: 4),
                 Source(id: "s4", endpointId: "e1", name: "Brave", iconKey: "", volume: 4500, muted: true, playing: false, system: false, meter: 5),
                 Source(id: "s5", endpointId: "e1", name: "System sounds", iconKey: "", volume: 4000, muted: false, playing: false, system: true, meter: 6),
             ]
             sources = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
-            levels = [2: 0.9, 3: 0.4]
+            levels = [2: 0.9, 3: 0.4, 8: 0.6]
             synced = true
             screen = .mixer(pc)
         }
@@ -128,6 +142,8 @@ final class AppModel: ObservableObject {
             mixer(); status = .connected
         case "reconnecting":
             mixer(); status = .reconnecting
+        case "panic":
+            mixer(); status = .connected; panic = true
         case "notrecognized":
             screen = .mixer(pc); status = .failed; error = CoreErr.notRecognized
         default:
@@ -241,9 +257,38 @@ final class AppModel: ObservableObject {
         client.setMute(endpoint: endpoint, id: id, muted: muted)
     }
 
+    /// Output devices only (microphones have their own card).
+    var outputs: [Endpoint] {
+        endpoints.values.filter { !$0.input }.sorted {
+            if $0.isDefault != $1.isDefault { return $0.isDefault }
+            return $0.name.lowercased() < $1.name.lowercased()
+        }
+    }
+
     var currentEndpoint: Endpoint? {
-        if let s = selectedEndpoint, let e = endpoints[s] { return e }
-        return endpoints.values.first { $0.isDefault } ?? endpoints.values.min { $0.name < $1.name }
+        if let s = selectedEndpoint, let e = endpoints[s], !e.input { return e }
+        return outputs.first
+    }
+
+    /// The PC's default microphone (or any microphone).
+    var microphone: Endpoint? {
+        let mics = endpoints.values.filter(\.input)
+        return mics.first { $0.isDefaultInput } ?? mics.min { $0.name < $1.name }
+    }
+
+    var canRoute: Bool { features & CoreClient.featureRouting != 0 }
+    var canPanic: Bool { features & CoreClient.featurePanic != 0 }
+
+    /// Send an app to an output; "" = follow the PC's default again.
+    func setRoute(source: String, endpoint: String) {
+        sources[source]?.route = endpoint
+        client.setRoute(source: source, endpoint: endpoint)
+    }
+
+    func togglePanic() {
+        panic.toggle()
+        client.panicMute(panic)
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
     }
 
     var currentSources: [Source] {
@@ -268,6 +313,7 @@ final class AppModel: ObservableObject {
     private func resetLink() {
         status = .idle; error = CoreErr.none; synced = false
         endpoints = [:]; sources = [:]; levels = [:]; selectedEndpoint = nil
+        features = 0; panic = false
     }
 
     private func apply(_ e: CoreClient.Event) {
@@ -280,6 +326,7 @@ final class AppModel: ObservableObject {
                let port = UInt16(e.message[e.message.index(after: bar)...]) {
                 connectedVia = e.message
                 store.updateAddress(id, host: String(e.message[..<bar]), port: port)
+                UserDefaults.standard.set(id, forKey: PanicRunner.lastPCKey)  // shortcuts act on this PC
             }
             if status == .failed, case .mixer(let t) = screen, CoreErr.invalidatesPairing(error) {
                 if let id = t.agentId { store.forget(id) }
@@ -299,15 +346,19 @@ final class AppModel: ObservableObject {
             synced = true
         case ARC_EV_ENDPOINT:
             endpoints[e.id] = Endpoint(id: e.id, name: e.name, volume: e.volume, muted: e.muted, isDefault: e.isDefault,
-                                       meter: Int(e.meter))
+                                       meter: Int(e.meter), input: e.input, isDefaultInput: e.isDefaultInput)
         case ARC_EV_ENDPOINT_REMOVED:
             endpoints[e.id] = nil
         case ARC_EV_SOURCE:
             sources[e.id] = Source(id: e.id, endpointId: e.endpointId, name: e.name, iconKey: e.iconKey, volume: e.volume,
-                                   muted: e.muted, playing: e.playing, system: e.systemSounds, meter: Int(e.meter))
+                                   muted: e.muted, playing: e.playing, system: e.systemSounds, meter: Int(e.meter),
+                                   route: e.route)
             if !e.iconKey.isEmpty, requestedIcons.insert(e.iconKey).inserted { client.requestIcon(e.iconKey) }
         case ARC_EV_SOURCE_REMOVED:
             sources[e.id] = nil
+        case ARC_EV_AGENT_INFO:
+            features = e.features
+            panic = e.panic
         case ARC_EV_ICON:
             if let d = e.data, !d.isEmpty, let img = UIImage(data: d) { icons[e.iconKey] = img }
         case ARC_EV_METERS:

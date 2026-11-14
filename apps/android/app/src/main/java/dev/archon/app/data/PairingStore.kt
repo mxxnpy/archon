@@ -70,6 +70,11 @@ class PairingStore(context: Context) {
 
     fun forget(agentId: String) = prefs.edit().remove(PREFIX + agentId).apply()
 
+    /** Agent id of the PC last connected to (used by the quick-settings tile). */
+    var lastPc: String?
+        get() = prefs.getString(KEY_LAST_PC, null)
+        set(v) = prefs.edit().putString(KEY_LAST_PC, v).apply()
+
     private fun key(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
@@ -99,6 +104,7 @@ class PairingStore(context: Context) {
     private companion object {
         const val PREFIX = "pc."
         const val KEY_CONTROLLER_ID = "controller_id"
+        const val KEY_LAST_PC = "last_pc"  // not under PREFIX: all() ignores it
         const val KEY_ALIAS = "archon.pairing"
     }
 }

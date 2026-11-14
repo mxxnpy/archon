@@ -174,6 +174,12 @@ void ControllerSession::handle_app(const Bytes& msg, Output& out) {
             out.events.push_back(std::move(ev));
             return;
         }
+        case MsgType::AgentInfo: {
+            ControllerEvent ev{K::AgentInfo};
+            if (!decode_agent_info(r, ev.agent)) return fail(out, ErrorCode::Protocol);
+            out.events.push_back(std::move(ev));
+            return;
+        }
         case MsgType::Meters: {
             ControllerEvent ev{K::Meters};
             if (!decode_meters(r, ev.meters)) return fail(out, ErrorCode::Protocol);

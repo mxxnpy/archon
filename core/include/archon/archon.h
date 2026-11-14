@@ -62,7 +62,8 @@ typedef enum {
     ARC_EV_SOURCE_REMOVED = 6,   /* id */
     ARC_EV_STATE_SYNCED = 7,     /* full dump finished */
     ARC_EV_ICON = 8,             /* icon_key, data/data_len = PNG (empty = no icon) */
-    ARC_EV_METERS = 9            /* data = n x {u8 slot_hi, u8 slot_lo, u8 level 0..255}, data_len = 3n */
+    ARC_EV_METERS = 9,           /* data = n x {u8 slot_hi, u8 slot_lo, u8 level 0..255}, data_len = 3n */
+    ARC_EV_AGENT_INFO = 10       /* features (ARC_FEATURE_*), panic, message = os ("windows", "macos") */
 } arc_event_type;
 
 typedef struct {
@@ -83,7 +84,17 @@ typedef struct {
     const uint8_t* data;
     size_t data_len;
     uint16_t meter; /* ENDPOINT/SOURCE: level-meter slot (0 = none) */
+    /* 1.2 */
+    uint8_t input;            /* ENDPOINT: microphone / capture device */
+    uint8_t is_default_input; /* ENDPOINT: the default microphone */
+    const char* route;        /* SOURCE: output endpoint id the app is pinned to ("" = default) */
+    uint32_t features;        /* AGENT_INFO */
+    uint8_t panic;            /* AGENT_INFO: panic mute active */
 } arc_event;
+
+#define ARC_FEATURE_INPUTS 1u
+#define ARC_FEATURE_ROUTING 2u
+#define ARC_FEATURE_PANIC 4u
 
 typedef void (*arc_event_cb)(void* user, const arc_event* event);
 
@@ -111,6 +122,10 @@ void arc_client_request_icon(arc_client* c, const char* icon_key);
 void arc_client_refresh(arc_client* c);
 /* Live level meters while the mixer is visible (costs ~1 KB/s). */
 void arc_client_set_meters(arc_client* c, int on);
+/* 1.2: send a source to an output endpoint; NULL or "" = follow the system default. */
+void arc_client_set_source_route(arc_client* c, const char* source_id, const char* endpoint_id);
+/* 1.2: mute every device (1) / undo (0). Queued until the link is up. */
+void arc_client_panic_mute(arc_client* c, int on);
 
 /* Agent id (16 bytes) and PC name stored in a pairing record. Returns 0 if malformed. */
 int arc_record_info(const uint8_t* record, size_t record_len, uint8_t out_agent_id[16], char* out_name, size_t name_cap);

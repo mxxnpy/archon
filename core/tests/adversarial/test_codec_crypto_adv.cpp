@@ -20,7 +20,8 @@ struct Case {
     const char* name;
     Bytes body;       // message body (after the type byte)
     Decoder decode;
-    bool tolerant;    // Endpoint/Source: trailing bytes allowed, meter optional
+    bool tolerant;    // Endpoint/Source/AgentInfo: trailing bytes allowed (later versions append)
+    size_t optional_tail = 0;  // bytes at the end older agents don't send (meter 1.1, route 1.2)
 };
 
 bool run_exact(const Bytes& b, const Decoder& d) {
@@ -66,14 +67,18 @@ std::vector<Case> cases() {
     v.push_back({"icon", body_of(encode_icon("k", png.data(), png.size())),
                  [](Reader& r) { std::string k; Bytes p; return decode_icon(r, k, p); }, false});
     EndpointInfo e{"E", "Speakers", 100, true, false, 3};
-    v.push_back({"endpoint", body_of(encode_endpoint(e)), [](Reader& r) { EndpointInfo x; return decode_endpoint(r, x); }, true});
+    v.push_back({"endpoint", body_of(encode_endpoint(e)), [](Reader& r) { EndpointInfo x; return decode_endpoint(r, x); }, true, 2});
     SourceInfo s;
     s.id = "S";
     s.endpoint_id = "E";
     s.name = "App";
     s.icon_key = "ik";
     s.meter = 9;
-    v.push_back({"source", body_of(encode_source(s)), [](Reader& r) { SourceInfo x; return decode_source(r, x); }, true});
+    v.push_back({"source", body_of(encode_source(s)), [](Reader& r) { SourceInfo x; return decode_source(r, x); }, true, 4});
+    AgentInfo ai{kFeatureInputs | kFeatureRouting, true, "windows"};
+    v.push_back({"agent_info", body_of(encode_agent_info(ai)), [](Reader& r) { AgentInfo x; return decode_agent_info(r, x); }, true});
+    v.push_back({"set_route", body_of(encode_set_route("S1", "E2")),
+                 [](Reader& r) { std::string a, b; return decode_set_route(r, a, b); }, false});
     return v;
 }
 
@@ -83,8 +88,9 @@ TEST(adv_decoders_reject_every_truncation_and_strict_ones_reject_extension) {
     int bad = 0;
     for (const Case& c : cases()) {
         REQUIRE(run_exact(c.body, c.decode));
-        // Tolerant decoders may accept losing the optional trailing u16 meter.
-        const size_t min_ok = c.tolerant ? c.body.size() - 2 : c.body.size();
+        // Older agents omit the optional tail (u16 meter, then str route): those
+        // shorter forms may decode; any other truncation must be rejected.
+        const size_t min_ok = c.body.size() - c.optional_tail;
         for (size_t len = 0; len < min_ok; ++len) {
             Bytes cut(c.body.begin(), c.body.begin() + std::ptrdiff_t(len));
             if (run_exact(cut, c.decode)) {

@@ -21,6 +21,8 @@ constexpr UINT WM_APP_TRAY = WM_APP + 1;
 constexpr UINT WM_APP_PAIR_REQUEST = WM_APP + 2;
 constexpr UINT WM_APP_PAIR_DONE = WM_APP + 3;
 constexpr UINT WM_APP_CONTROLLERS = WM_APP + 4;
+constexpr UINT WM_APP_PANIC = WM_APP + 5;
+constexpr int kPanicHotkey = 1;  // Ctrl+Alt+M
 constexpr UINT kTrayId = 1;
 
 // Archon palette (docs/design.md): ink, paper, pastel yellow accent.
@@ -48,7 +50,7 @@ void draw_ring(Gdiplus::Graphics& g, float x, float y, float d, float w, float f
     if (fraction > 0.002f) g.DrawArc(&on, x, y, d, d, start, sweep * std::min(fraction, 1.f));
 }
 
-enum MenuId : UINT { ID_DEVICES = 100, ID_AUTOSTART, ID_OPEN_LOG, ID_UNLOCK, ID_EXIT };
+enum MenuId : UINT { ID_DEVICES = 100, ID_AUTOSTART, ID_OPEN_LOG, ID_UNLOCK, ID_EXIT, ID_PANIC };
 enum CtrlId : int { IDC_REJECT = 200, IDC_LIST, IDC_REMOVE, IDC_CLOSE, IDC_TITLE = 300, IDC_WANTS, IDC_CODE, IDC_HINT };
 
 struct PairRequest {
@@ -89,6 +91,9 @@ struct Text {
     const wchar_t* confirm_remove; // %s
     const wchar_t* never;
     const wchar_t* unlock;
+    const wchar_t* panic;        // menu item
+    const wchar_t* panic_title;
+    const wchar_t* panic_text;
 };
 
 const Text& T() {
@@ -116,7 +121,10 @@ const Text& T() {
                          L"Abra o app Archon no celular, na mesma rede, para conectar.",
                          L"Remover “%s”? O aparelho precisará parear de novo.",
                          L"—",
-                         L"Desbloquear pareamento"};
+                         L"Desbloquear pareamento",
+                         L"Silenciar tudo",
+                         L"Tudo silenciado",
+                         L"Saídas e microfones foram silenciados. Use o mesmo atalho para voltar."};
     static const Text en{L"Archon",
                          L"Paired devices…",
                          L"Start with Windows",
@@ -141,7 +149,10 @@ const Text& T() {
                          L"Open the Archon app on your phone, on the same network, to connect.",
                          L"Remove “%s”? The device will need to pair again.",
                          L"—",
-                         L"Unlock pairing"};
+                         L"Unlock pairing",
+                         L"Mute everything",
+                         L"Everything muted",
+                         L"Outputs and microphones are muted. Use the same shortcut to undo."};
     return is_portuguese_ui() ? pt : en;
 }
 
@@ -222,7 +233,12 @@ bool AgentUi::create(HINSTANCE inst, bool first_run) {
 
     taskbar_created_ = RegisterWindowMessageW(L"TaskbarCreated");
     main_ = CreateWindowExW(0, kMainWindowClass, L"Archon", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr, inst, this);
-    return main_ != nullptr;
+    if (!main_) return false;
+    // Panic mute from anywhere. Another app may own the combination: then the
+    // tray item is the way in (logged, never fatal).
+    hotkey_ok_ = RegisterHotKey(main_, kPanicHotkey, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'M') != FALSE;
+    if (!hotkey_ok_) log_line("Ctrl+Alt+M is taken by another app; panic mute stays in the tray menu");
+    return true;
 }
 
 void AgentUi::attach(arc::Server* server, arc::TrustStore* store, uint16_t port, const std::wstring& pc_name,
@@ -254,6 +270,7 @@ void AgentUi::destroy() {
     Shell_NotifyIconW(NIM_DELETE, &nid);
     if (pair_) DestroyWindow(pair_);
     if (devices_) DestroyWindow(devices_);
+    if (main_ && hotkey_ok_) UnregisterHotKey(main_, kPanicHotkey);
     if (main_) DestroyWindow(main_);
     if (font_) DeleteObject(font_);
     if (font_code_) DeleteObject(font_code_);
@@ -286,6 +303,8 @@ void AgentUi::on_controllers_changed(const std::vector<arc::ConnectedController>
 void AgentUi::on_log(const std::string& line) { log_line(line); }
 
 void AgentUi::on_pairing_lockout(int lockouts, int64_t locked_until_unix) { save_lockout(lockouts, locked_until_unix); }
+
+void AgentUi::on_panic_changed(bool active) { PostMessageW(main_, WM_APP_PANIC, active ? 1 : 0, 0); }
 
 // ---- tray ---------------------------------------------------------------------
 
@@ -330,6 +349,8 @@ void AgentUi::show_menu() {
     AppendMenuW(m, MF_STRING | MF_DISABLED, 0, header.c_str());
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_DEVICES, T().devices);
+    const std::wstring panic_label = std::wstring(T().panic) + (hotkey_ok_ ? L"\tCtrl+Alt+M" : L"");
+    AppendMenuW(m, MF_STRING | (panic_ ? MF_CHECKED : 0), ID_PANIC, panic_label.c_str());
     AppendMenuW(m, MF_STRING | (autostart_enabled() ? MF_CHECKED : 0), ID_AUTOSTART, T().autostart);
     AppendMenuW(m, MF_STRING, ID_UNLOCK, T().unlock);  // clears a lockout caused by wrong codes
     AppendMenuW(m, MF_STRING, ID_OPEN_LOG, T().open_log);
@@ -351,6 +372,9 @@ void AgentUi::show_menu() {
         }
         case ID_UNLOCK:
             if (server_) server_->reset_pairing_lockout();
+            break;
+        case ID_PANIC:
+            if (server_) server_->panic_mute(!panic_);
             break;
         case ID_EXIT: PostQuitMessage(0); break;
         default: break;
@@ -385,6 +409,13 @@ LRESULT AgentUi::handle_main(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case WM_APP_SHOW_DEVICES:
             show_devices();
+            return 0;
+        case WM_HOTKEY:
+            if (w == kPanicHotkey && server_) server_->panic_mute(!panic_);
+            return 0;
+        case WM_APP_PANIC:
+            panic_ = w != 0;
+            if (panic_) balloon(T().panic_title, T().panic_text);
             return 0;
         case WM_APP_PAIR_REQUEST: {
             std::unique_ptr<PairRequest> p(reinterpret_cast<PairRequest*>(l));

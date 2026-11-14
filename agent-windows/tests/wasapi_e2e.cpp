@@ -6,6 +6,11 @@
 //
 // Run: archon_wasapi_e2e.exe   (exit code 0 = pass)
 
+#include <windows.h>
+#include <mmdeviceapi.h>
+#include <audioclient.h>
+#include <wrl/client.h>
+
 #include <chrono>
 #include <cstdio>
 #include <map>
@@ -31,6 +36,8 @@ std::map<uint16_t, uint8_t> levels;
 int meter_frames = 0;
 ClientStatus status = ClientStatus::Idle;
 int synced = 0;
+AgentInfo agent_info;
+int agent_infos = 0;
 int failures = 0;
 
 struct Store : TrustStore {
@@ -73,6 +80,10 @@ struct L : ClientListener {
         if (e.kind == K::Source) srcs[e.source.id] = e.source;
         if (e.kind == K::SourceRemoved) srcs.erase(e.id);
         if (e.kind == K::StateSynced) ++synced;
+        if (e.kind == K::AgentInfo) {
+            agent_info = e.agent;
+            ++agent_infos;
+        }
         if (e.kind == K::Icon) icons[e.id] = e.data;
         if (e.kind == K::Meters) {
             ++meter_frames;
@@ -175,6 +186,98 @@ int main() {
     } else {
         std::printf("SKIP no app session with an icon (play something to cover this)\n");
     }
+
+    // ---- 1.2: AGENT_INFO, microphones, per-app routing ----
+    check(wait([] { return agent_infos > 0; }), "AGENT_INFO received in the dump");
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        std::printf("     features=0x%x os=%s routing=%s\n", agent_info.features, agent_info.os.c_str(),
+                    (agent_info.features & kFeatureRouting) ? "yes" : "no");
+        check((agent_info.features & kFeatureInputs) && (agent_info.features & kFeaturePanic) && agent_info.os == "windows",
+              "agent announces inputs + panic on windows");
+    }
+    std::string mic_id;
+    EndpointInfo mic;
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        int inputs = 0;
+        for (auto& [id, e] : eps) {
+            if (!e.input) continue;
+            ++inputs;
+            if (e.is_default_input || mic_id.empty()) {
+                mic_id = id;
+                mic = e;
+            }
+        }
+        std::printf("     microphones listed: %d\n", inputs);
+    }
+    if (!mic_id.empty()) {
+        client.set_endpoint_mute(mic_id, !mic.muted);
+        check(wait([&] { return eps[mic_id].muted == !mic.muted; }), "microphone mute toggled via WASAPI");
+        client.set_endpoint_mute(mic_id, mic.muted);
+        check(wait([&] { return eps[mic_id].muted == mic.muted; }), "microphone mute restored");
+    } else {
+        std::printf("SKIP no microphone on this PC\n");
+    }
+
+    // Open a silent stream so this test process is an app in the mixer, then
+    // route it to another output and back (touches no real application).
+    Microsoft::WRL::ComPtr<IMMDeviceEnumerator> mmde;
+    Microsoft::WRL::ComPtr<IMMDevice> defdev;
+    Microsoft::WRL::ComPtr<IAudioClient> ac;
+    WAVEFORMATEX* fmt = nullptr;
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool stream_ok =
+        SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&mmde))) &&
+        SUCCEEDED(mmde->GetDefaultAudioEndpoint(eRender, eConsole, &defdev)) &&
+        SUCCEEDED(defdev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &ac)) && SUCCEEDED(ac->GetMixFormat(&fmt)) &&
+        SUCCEEDED(ac->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 10000000, 0, fmt, nullptr)) && SUCCEEDED(ac->Start());
+    if (fmt) CoTaskMemFree(fmt);
+    const uint32_t self = GetCurrentProcessId();
+    auto my_source = [&]() -> const SourceInfo* {
+        for (auto& [id, s] : srcs)
+            if (s.pid == self) return &s;
+        return nullptr;
+    };
+    if (stream_ok && (agent_info.features & kFeatureRouting)) {
+        check(wait([&] { return my_source() != nullptr; }), "test process listed as an app");
+        std::string sid, target;
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            const SourceInfo* me = my_source();
+            if (me) {
+                sid = me->id;
+                for (auto& [id, e] : eps)
+                    if (!e.input && id != me->endpoint_id) target = id;
+            }
+        }
+        if (!sid.empty() && !target.empty()) {
+            client.set_source_route(sid, target);
+            check(wait([&] {
+                      const SourceInfo* me = my_source();
+                      return me && me->route == target;
+                  }),
+                  "app pinned to another output (route reported)");
+            {
+                std::lock_guard<std::mutex> lk(mu);
+                const SourceInfo* me = my_source();
+                std::printf("     now on endpoint %s\n", me ? me->endpoint_id.c_str() : "?");
+                if (me) sid = me->id;
+            }
+            client.set_source_route(sid, "");
+            check(wait([&] {
+                      const SourceInfo* me = my_source();
+                      return me && me->route.empty();
+                  }),
+                  "app unpinned (follows the default again)");
+        } else {
+            std::printf("SKIP routing: needs a second output device\n");
+        }
+    } else {
+        std::printf("SKIP routing (stream %s, routing %s)\n", stream_ok ? "ok" : "failed",
+                    (agent_info.features & kFeatureRouting) ? "available" : "unavailable");
+    }
+    if (ac) ac->Stop();
 
     client.set_meters(true);
     std::this_thread::sleep_for(2s);

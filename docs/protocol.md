@@ -227,20 +227,51 @@ Volumes are `u16` in **0..10000** (0.00 % – 100.00 %). Ids are opaque strings
 | `0x25` | GET_ICON | `str icon_key` |
 | `0x26` | PING | `u32 seq` |
 | `0x27` | SET_METERS | `u8 on` — subscribe (1) or unsubscribe (0) to live level meters. Per connection; send it again after every reconnect |
+| `0x28` | SET_SOURCE_ROUTE | `str source_id`, `str endpoint_id` — send this app's audio to an output device; empty `endpoint_id` = follow the system default again (1.2) |
+| `0x29` | PANIC_MUTE | `u8 on` — 1 mutes every output and input device that is not muted yet and remembers which; 0 unmutes exactly those (1.2) |
 
 ### Agent → controller
 
 | Type | Name | Body |
 | --- | --- | --- |
 | `0x40` | STATE_RESET | — controller clears its model |
-| `0x41` | ENDPOINT | `str id`, `str name` (≤ 256 B), `u8 flags` (bit0 default output, bit1 muted), `u16 volume`, `u16 meter_slot` — insert or replace |
+| `0x41` | ENDPOINT | `str id`, `str name` (≤ 256 B), `u8 flags` (bit0 default output, bit1 muted, bit2 input device, bit3 default input), `u16 volume`, `u16 meter_slot` — insert or replace |
 | `0x42` | ENDPOINT_REMOVED | `str id` |
-| `0x43` | SOURCE | `str id`, `str endpoint_id`, `str name` (≤ 256 B), `str icon_key` (≤ 128 B, empty = none), `u32 pid`, `u8 flags` (bit0 muted, bit1 playing now, bit2 system sounds), `u16 volume`, `u16 meter_slot` — insert or replace |
+| `0x43` | SOURCE | `str id`, `str endpoint_id`, `str name` (≤ 256 B), `str icon_key` (≤ 128 B, empty = none), `u32 pid`, `u8 flags` (bit0 muted, bit1 playing now, bit2 system sounds), `u16 volume`, `u16 meter_slot`, `str route` (≤ 512 B; the output this app is pinned to, empty = follows the default; 1.2) — insert or replace |
 | `0x44` | SOURCE_REMOVED | `str id` |
 | `0x45` | STATE_SYNCED | — end of a full dump |
 | `0x46` | ICON | `str icon_key`, `u32 length`, PNG bytes (≤ 48 KiB) |
 | `0x47` | PONG | `u32 seq` |
 | `0x48` | METERS | `u8 count`, then `count` × (`u16 meter_slot`, `u8 peak`) — peak 0..255 on a perceptual (square-root) scale |
+| `0x49` | AGENT_INFO | `u32 features`, `u8 panic` (1 while a panic mute is active), `str os` (≤ 32 B: `windows`, `macos`) — sent right after STATE_RESET in every dump and again whenever it changes (1.2) |
+
+### Inputs, routing and panic mute (added in 1.2, backward compatible)
+
+* **Microphones** are endpoints with flags bit2 set. They take the same
+  SET_ENDPOINT_VOLUME / SET_ENDPOINT_MUTE commands and have meters like outputs.
+  bit0 stays "default output" only; the default microphone has bit3. Agents of
+  1.1 send no inputs; controllers of 1.1 ignore the unknown bits.
+* **Per-app output.** SOURCE carries `route`: the output device the app is
+  pinned to (or empty). SET_SOURCE_ROUTE pins or unpins it; the agent answers
+  with the updated SOURCE (and, as the app's audio moves, a SOURCE whose
+  `endpoint_id` is the new device). A route to an unknown or input endpoint is
+  ignored. The pin is per application and survives app restarts where the OS
+  allows it (Windows keeps it per executable).
+* **Panic mute** is a toggle the controller can send without a mixer on screen
+  (shortcut, widget, tile). The agent tracks which devices *it* muted, so
+  PANIC_MUTE 0 never unmutes a device the user had muted before; a device the
+  user unmutes by hand in between is simply forgotten. The state lives in the
+  agent's memory (a restart ends the panic).
+* **AGENT_INFO.features** tells the controller what to offer:
+
+  | Bit | Feature |
+  | --- | --- |
+  | 0 | input devices (microphones) |
+  | 1 | per-app output routing |
+  | 2 | panic mute |
+
+  Controllers hide what the agent does not support. A 1.1 agent never sends
+  AGENT_INFO: treat that as features = 0.
 
 ### Level meters (added in 1.1, backward compatible)
 

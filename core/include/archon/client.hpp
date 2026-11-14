@@ -6,6 +6,7 @@
 #include <atomic>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 #include "archon/controller_session.hpp"
@@ -66,6 +67,12 @@ public:
     void set_endpoint_mute(const std::string& id, bool muted);
     void set_source_volume(const std::string& id, uint16_t volume);
     void set_source_mute(const std::string& id, bool muted);
+    // 1.2: send an app's audio to an output (empty endpoint = system default).
+    void set_source_route(const std::string& source_id, const std::string& endpoint_id);
+    // 1.2: mute everything / undo. Unlike other commands it is not dropped
+    // while offline: the last request is sent once, as soon as the secure
+    // channel is up (a shortcut calls resume() then panic_mute()).
+    void panic_mute(bool on);
     void request_icon(const std::string& icon_key);
     void refresh();
     // Subscribe to live level meters (kept across reconnects).
@@ -95,6 +102,7 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> meters_{false};
     std::atomic<bool> live_{false};  // secure channel up: commands are accepted only then
+    std::optional<bool> pending_panic_;  // guarded by mu_: panic requested before the link was up
 
     // Connection parameters (owned by the worker while it runs).
     std::vector<std::pair<std::string, uint16_t>> addrs_;

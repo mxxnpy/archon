@@ -59,4 +59,16 @@
     <string name="err_not_recognized">O PC não reconheceu este celular. Se você removeu o pareamento no PC, pareie de novo.</string>
     <string name="err_wrong_agent">Outro aparelho respondeu no endereço do PC. Tentando de novo…</string>
     <string name="pair_again">Parear de novo</string>
+    <string name="microphone">Microfone</string>
+    <string name="panic_on">Silenciar tudo no PC</string>
+    <string name="panic_off">Reativar o som do PC</string>
+    <string name="panic_active">Tudo silenciado no PC</string>
+    <string name="panic_undo">Reativar</string>
+    <string name="app_output">Saída deste app</string>
+    <string name="pc_default">Padrão do PC</string>
+    <string name="tile_label">Silenciar PC</string>
+    <string name="tile_no_pc">Pareie um PC no Archon primeiro</string>
+    <string name="tile_failed">Não foi possível falar com o PC</string>
+    <string name="tile_muted">Tudo silenciado no PC</string>
+    <string name="tile_unmuted">Som do PC reativado</string>
 </resources>

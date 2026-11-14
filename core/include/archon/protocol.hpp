@@ -39,6 +39,8 @@ enum class MsgType : uint8_t {
     GetIcon = 0x25,
     Ping = 0x26,
     SetMeters = 0x27,
+    SetSourceRoute = 0x28,  // 1.2
+    PanicMute = 0x29,       // 1.2
 
     StateReset = 0x40,
     Endpoint = 0x41,
@@ -49,6 +51,7 @@ enum class MsgType : uint8_t {
     Icon = 0x46,
     Pong = 0x47,
     Meters = 0x48,
+    AgentInfo = 0x49,  // 1.2
 };
 
 enum class Mode : uint8_t { Pair = 1, Resume = 2 };
@@ -91,11 +94,14 @@ struct EndpointInfo {
     std::string name;
     uint16_t volume = 0;
     bool muted = false;
-    bool is_default = false;
+    bool is_default = false;        // default output (outputs only)
     uint16_t meter = 0;  // level-meter slot assigned by the server (0 = none)
+    bool input = false;             // microphone / capture device (1.2)
+    bool is_default_input = false;  // the default microphone (1.2)
     bool operator==(const EndpointInfo& o) const {
         return id == o.id && name == o.name && volume == o.volume && muted == o.muted &&
-               is_default == o.is_default && meter == o.meter;
+               is_default == o.is_default && meter == o.meter && input == o.input &&
+               is_default_input == o.is_default_input;
     }
     bool operator!=(const EndpointInfo& o) const { return !(*this == o); }
 };
@@ -111,10 +117,12 @@ struct SourceInfo {
     bool playing = false;
     bool system_sounds = false;
     uint16_t meter = 0;  // level-meter slot assigned by the server (0 = none)
+    std::string route;   // output this app is pinned to; empty = follows the default (1.2)
     bool operator==(const SourceInfo& o) const {
         return id == o.id && endpoint_id == o.endpoint_id && name == o.name &&
                icon_key == o.icon_key && pid == o.pid && volume == o.volume && muted == o.muted &&
-               playing == o.playing && system_sounds == o.system_sounds && meter == o.meter;
+               playing == o.playing && system_sounds == o.system_sounds && meter == o.meter &&
+               route == o.route;
     }
     bool operator!=(const SourceInfo& o) const { return !(*this == o); }
 };
@@ -170,7 +178,24 @@ Bytes encode_seq(MsgType t, uint32_t seq);          // Ping, Pong
 Bytes encode_endpoint(const EndpointInfo& e);
 Bytes encode_source(const SourceInfo& s);
 Bytes encode_icon(const std::string& key, const uint8_t* png, size_t n);
-Bytes encode_flag(MsgType t, bool on);  // SetMeters
+Bytes encode_flag(MsgType t, bool on);  // SetMeters, PanicMute
+
+// Feature bits announced in AGENT_INFO (1.2).
+enum AgentFeature : uint32_t {
+    kFeatureInputs = 1u << 0,
+    kFeatureRouting = 1u << 1,
+    kFeaturePanic = 1u << 2,
+};
+constexpr size_t kMaxOsName = 32;
+struct AgentInfo {
+    uint32_t features = 0;
+    bool panic = false;
+    std::string os;
+    bool operator==(const AgentInfo& o) const { return features == o.features && panic == o.panic && os == o.os; }
+    bool operator!=(const AgentInfo& o) const { return !(*this == o); }
+};
+Bytes encode_agent_info(const AgentInfo& a);
+Bytes encode_set_route(const std::string& source_id, const std::string& endpoint_id);
 
 struct MeterLevel {
     uint16_t slot = 0;
@@ -188,6 +213,8 @@ bool decode_source(Reader& r, SourceInfo& s);
 bool decode_icon(Reader& r, std::string& key, Bytes& png);
 bool decode_flag(Reader& r, bool& on);
 bool decode_meters(Reader& r, std::vector<MeterLevel>& levels);
+bool decode_agent_info(Reader& r, AgentInfo& a);
+bool decode_set_route(Reader& r, std::string& source_id, std::string& endpoint_id);
 
 // ---- Pairing record (stored by controllers) ----------------------------------
 

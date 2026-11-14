@@ -27,4 +27,8 @@ interface ArchonUi {
     fun setVolume(endpoint: Boolean, id: String, volume: Int)
     fun setMute(endpoint: Boolean, id: String, muted: Boolean)
     fun setMetersVisible(visible: Boolean)
+    /** Send an app to an output ("" = follow the PC's default). */
+    fun setRoute(source: String, endpoint: String)
+    /** Mute everything on the PC / undo. */
+    fun togglePanic()
 }

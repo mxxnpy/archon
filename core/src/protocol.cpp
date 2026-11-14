@@ -179,7 +179,8 @@ Bytes encode_seq(MsgType t, uint32_t seq) {
 
 Bytes encode_endpoint(const EndpointInfo& e) {
     Writer w;
-    uint8_t flags = (e.is_default ? 1 : 0) | (e.muted ? 2 : 0);
+    uint8_t flags = uint8_t((e.is_default ? 1 : 0) | (e.muted ? 2 : 0) | (e.input ? 4 : 0) |
+                            (e.is_default_input ? 8 : 0));
     w.u8(uint8_t(MsgType::Endpoint)).str(e.id, kMaxId).str(e.name, kMaxDisplayName).u8(flags);
     w.u16(clamp_volume(e.volume)).u16(e.meter);
     return w.take();
@@ -191,7 +192,33 @@ Bytes encode_source(const SourceInfo& s) {
     w.u8(uint8_t(MsgType::Source)).str(s.id, kMaxId).str(s.endpoint_id, kMaxId);
     w.str(s.name, kMaxDisplayName).str(s.icon_key, kMaxIconKey).u32(s.pid).u8(flags);
     w.u16(clamp_volume(s.volume)).u16(s.meter);
+    w.str(s.route, kMaxId);  // 1.2
     return w.take();
+}
+
+Bytes encode_agent_info(const AgentInfo& a) {
+    Writer w;
+    w.u8(uint8_t(MsgType::AgentInfo)).u32(a.features).u8(a.panic ? 1 : 0).str(a.os, kMaxOsName);
+    return w.take();
+}
+
+Bytes encode_set_route(const std::string& source_id, const std::string& endpoint_id) {
+    Writer w;
+    w.u8(uint8_t(MsgType::SetSourceRoute)).str(source_id, kMaxId).str(endpoint_id, kMaxId);
+    return w.take();
+}
+
+bool decode_agent_info(Reader& r, AgentInfo& a) {
+    a.features = r.u32();
+    a.panic = r.u8() != 0;
+    a.os = r.str(kMaxOsName);
+    return r.ok();  // tolerant: later versions may append fields
+}
+
+bool decode_set_route(Reader& r, std::string& source_id, std::string& endpoint_id) {
+    source_id = r.str(kMaxId);
+    endpoint_id = r.str(kMaxId);
+    return r.at_end();
 }
 
 Bytes encode_icon(const std::string& key, const uint8_t* png, size_t n) {
@@ -232,6 +259,8 @@ bool decode_endpoint(Reader& r, EndpointInfo& e) {
     e.volume = clamp_volume(r.u16());
     e.is_default = flags & 1;
     e.muted = flags & 2;
+    e.input = flags & 4;             // 1.2
+    e.is_default_input = flags & 8;  // 1.2
     e.meter = r.remaining() >= 2 ? r.u16() : 0;  // added in 1.1; absent from older agents
     return r.ok();
 }
@@ -248,6 +277,7 @@ bool decode_source(Reader& r, SourceInfo& s) {
     s.playing = flags & 2;
     s.system_sounds = flags & 4;
     s.meter = r.remaining() >= 2 ? r.u16() : 0;
+    s.route = r.remaining() > 0 ? r.str(kMaxId) : std::string();  // 1.2
     return r.ok();
 }
 

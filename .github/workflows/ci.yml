@@ -127,7 +127,7 @@ jobs:
             sleep 4
             xcrun simctl io "$UDID" screenshot "shots/ios-$2.png"
           }
-          for s in computers pairing pairing-wrong mixer reconnecting notrecognized; do shoot "$s" "$s"; done
+          for s in computers pairing pairing-wrong mixer reconnecting notrecognized panic; do shoot "$s" "$s"; done
           xcrun simctl ui "$UDID" content_size accessibility-extra-large
           for s in computers mixer pairing; do shoot "$s" "$s-axl"; done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

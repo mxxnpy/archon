@@ -11,6 +11,7 @@ import android.graphics.Canvas
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTextInput
 import dev.archon.app.core.LinkStatus
+import dev.archon.app.core.NativeClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
 import org.junit.Test
@@ -52,6 +53,8 @@ class ScreenshotTest {
         override fun setVolume(endpoint: Boolean, id: String, volume: Int) {}
         override fun setMute(endpoint: Boolean, id: String, muted: Boolean) {}
         override fun setMetersVisible(visible: Boolean) {}
+        override fun setRoute(source: String, endpoint: String) {}
+        override fun togglePanic() {}
     }
 
     private val pc = Target("a".repeat(32), "DESKTOP-01", "192.168.0.10", 47321)
@@ -106,19 +109,29 @@ class ScreenshotTest {
         screen.value = Screen.Mixer(pc)
         link.value = LinkState(
             status = LinkStatus.CONNECTED, synced = true,
-            endpoints = mapOf("e1" to Endpoint("e1", "SteelSeries Sonar - Gaming", 6400, false, true, 1)),
+            endpoints = mapOf(
+                "e1" to Endpoint("e1", "SteelSeries Sonar - Gaming", 6400, false, true, 1),
+                "e2" to Endpoint("e2", "Fone Bluetooth", 5000, false, false, 7),
+                "m1" to Endpoint("m1", "Microfone (USB)", 7500, false, false, 8, input = true, isDefaultInput = true),
+            ),
+            features = NativeClient.FEATURE_INPUTS or NativeClient.FEATURE_ROUTING or NativeClient.FEATURE_PANIC,
             sources = listOf(
                 Source("s1", "e1", "Spotify", "", 7200, false, true, false, 2),
-                Source("s2", "e1", "Discord", "", 8000, false, true, false, 3),
+                Source("s2", "e1", "Discord", "", 8000, false, true, false, 3, route = "e1"),
                 Source("s3", "e1", "Counter-Strike 2", "", 5800, false, false, false, 4),
                 Source("s4", "e1", "Brave", "", 4500, true, false, false, 5),
                 Source("s5", "e1", "System sounds", "", 4000, false, false, true, 6),
             ).associateBy { it.id },
         )
-        levels.value = mapOf(2 to 0.9f, 3 to 0.4f)
+        levels.value = mapOf(2 to 0.9f, 3 to 0.4f, 8 to 0.6f)
     }
 
     @Test fun mixer() = shoot("3-mixer", mixerUi())
+
+    // 1.2: panic mute on (banner + red button), microphone card, app pinned to an output.
+    @Test fun mixerPanic() = shoot("3e-mixer-panic", mixerUi().apply {
+        link.value = link.value.copy(panic = true)
+    })
 
     @Test fun mixerReconnecting() = shoot("3b-mixer-connecting", FakeUi().apply {
         screen.value = Screen.Mixer(pc)

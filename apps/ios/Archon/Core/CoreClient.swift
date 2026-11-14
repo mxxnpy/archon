@@ -20,7 +20,17 @@ final class CoreClient {
         var systemSounds: Bool
         var meter: UInt16
         var data: Data?
+        // 1.2
+        var input = false
+        var isDefaultInput = false
+        var route = ""
+        var features: UInt32 = 0
+        var panic = false
     }
+
+    static let featureInputs = UInt32(ARC_FEATURE_INPUTS)
+    static let featureRouting = UInt32(ARC_FEATURE_ROUTING)
+    static let featurePanic = UInt32(ARC_FEATURE_PANIC)
 
     static let maxVolume = Int(ARC_MAX_VOLUME)
     static let defaultPort = UInt16(ARC_DEFAULT_PORT)
@@ -86,6 +96,10 @@ final class CoreClient {
     func requestIcon(_ key: String) { arc_client_request_icon(handle, key) }
     func refresh() { arc_client_refresh(handle) }
     func setMeters(_ on: Bool) { arc_client_set_meters(handle, on ? 1 : 0) }
+    /// Send an app to an output ("" = follow the PC's default).
+    func setRoute(source: String, endpoint: String) { arc_client_set_source_route(handle, source, endpoint) }
+    /// Mute every device on the PC / undo. Queued until the link is up.
+    func panicMute(_ on: Bool) { arc_client_panic_mute(handle, on ? 1 : 0) }
 
     static func generateId() -> Data {
         var id = [UInt8](repeating: 0, count: 16)
@@ -111,6 +125,8 @@ final class CoreClient {
               endpointId: s(e.endpoint_id), name: s(e.name), iconKey: s(e.icon_key), pid: e.pid,
               volume: Int(e.volume), muted: e.muted != 0, isDefault: e.is_default != 0, playing: e.playing != 0,
               systemSounds: e.system_sounds != 0, meter: e.meter,
-              data: e.data.map { Data(bytes: $0, count: e.data_len) })
+              data: e.data.map { Data(bytes: $0, count: e.data_len) },
+              input: e.input != 0, isDefaultInput: e.is_default_input != 0, route: s(e.route),
+              features: e.features, panic: e.panic != 0)
     }
 }

@@ -28,10 +28,13 @@ data class Target(val agentId: String?, val name: String, val host: String, val 
 
 data class Endpoint(
     val id: String, val name: String, val volume: Int, val muted: Boolean, val isDefault: Boolean, val meter: Int = 0,
+    val input: Boolean = false,           // microphone
+    val isDefaultInput: Boolean = false,  // the PC's default microphone
 )
 data class Source(
     val id: String, val endpointId: String, val name: String, val iconKey: String, val volume: Int,
     val muted: Boolean, val playing: Boolean, val system: Boolean, val meter: Int = 0,
+    val route: String = "",  // output this app is pinned to ("" = follows the PC's default)
 )
 
 data class LinkState(
@@ -40,7 +43,17 @@ data class LinkState(
     val synced: Boolean = false,
     val endpoints: Map<String, Endpoint> = emptyMap(),
     val sources: Map<String, Source> = emptyMap(),
-)
+    val features: Int = 0,     // AGENT_INFO: what the PC supports
+    val panic: Boolean = false, // everything muted by the panic mute
+) {
+    val outputs: List<Endpoint>
+        get() = endpoints.values.filter { !it.input }
+            .sortedWith(compareByDescending<Endpoint> { it.isDefault }.thenBy { it.name.lowercase() })
+    val microphone: Endpoint?
+        get() = endpoints.values.filter { it.input }.let { m -> m.firstOrNull { it.isDefaultInput } ?: m.minByOrNull { it.name } }
+    val canRoute: Boolean get() = features and NativeClient.FEATURE_ROUTING != 0
+    val canPanic: Boolean get() = features and NativeClient.FEATURE_PANIC != 0
+}
 
 /** One row on the computers screen. */
 data class PcRow(val target: Target, val paired: Boolean, val online: Boolean)
@@ -185,6 +198,17 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
         client.setMute(endpoint, id, muted)
     }
 
+    override fun setRoute(source: String, endpoint: String) {
+        _link.update { s -> s.copy(sources = s.sources.mapValues { (k, v) -> if (k == source) v.copy(route = endpoint) else v }) }
+        client.setRoute(source, endpoint)
+    }
+
+    override fun togglePanic() {
+        val on = !_link.value.panic
+        _link.update { it.copy(panic = on) }
+        client.panicMute(on)
+    }
+
     override fun reconnect() {
         (_screen.value as? Screen.Mixer)?.let { connect(it.target) }
     }
@@ -223,17 +247,19 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
             CoreEvent.STATE_RESET -> _link.update { it.copy(endpoints = emptyMap(), sources = emptyMap(), synced = false) }
             CoreEvent.STATE_SYNCED -> _link.update { it.copy(synced = true) }
             CoreEvent.ENDPOINT -> _link.update {
-                it.copy(endpoints = it.endpoints + (e.id to Endpoint(e.id, e.name, e.volume, e.muted, e.isDefault, e.meter)))
+                it.copy(endpoints = it.endpoints + (e.id to Endpoint(e.id, e.name, e.volume, e.muted, e.isDefault, e.meter,
+                    e.input, e.isDefaultInput)))
             }
             CoreEvent.ENDPOINT_REMOVED -> _link.update { it.copy(endpoints = it.endpoints - e.id) }
             CoreEvent.SOURCE -> {
                 _link.update {
                     it.copy(sources = it.sources + (e.id to Source(e.id, e.endpointId, e.name, e.iconKey, e.volume,
-                        e.muted, e.playing, e.systemSounds, e.meter)))
+                        e.muted, e.playing, e.systemSounds, e.meter, e.route)))
                 }
                 if (e.iconKey.isNotEmpty() && requestedIcons.add(e.iconKey)) client.requestIcon(e.iconKey)
             }
             CoreEvent.SOURCE_REMOVED -> _link.update { it.copy(sources = it.sources - e.id) }
+            CoreEvent.AGENT_INFO -> _link.update { it.copy(features = e.features, panic = e.panic) }
             CoreEvent.METERS -> {
                 val d = e.data ?: return
                 _levels.update { old ->
@@ -279,6 +305,7 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
             val host = message.substringBeforeLast('|')
             val port = message.substringAfterLast('|').toIntOrNull()
             if (port != null) screen.target.agentId?.let { store.updateAddress(it, host, port) }
+            screen.target.agentId?.let { store.lastPc = it }  // the quick-settings tile acts on this PC
         }
         if (status != LinkStatus.FAILED) return
         if (screen is Screen.Mixer && CoreError.invalidatesPairing(error)) {

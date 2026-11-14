@@ -52,3 +52,18 @@
 "Offline" = "Offline";
 "Novo · toque em Parear" = "New · tap Pair";
 "Falhou" = "Failed";
+
+/* 1.2: microphone, per-app output, panic mute */
+"Microfone" = "Microphone";
+"Silenciar tudo no PC" = "Mute everything on the PC";
+"Reativar o som do PC" = "Unmute the PC";
+"Tudo silenciado no PC" = "Everything on the PC is muted";
+"Reativar" = "Unmute";
+"Saída deste app" = "This app's output";
+"Padrão do PC" = "PC default";
+", saída " = ", output ";
+"Tudo silenciado no PC." = "Everything on the PC is muted.";
+"Som do PC reativado." = "The PC's sound is back on.";
+"Não foi possível falar com o PC. Ele precisa estar ligado, na mesma rede." = "Couldn't reach the PC. It needs to be on and on the same network.";
+"Silencia todas as saídas e microfones do último PC usado no Archon." = "Mutes every output and microphone of the last PC used in Archon.";
+"Desfaz o “Silenciar tudo no PC”." = "Undoes “Mute everything on the PC”.";

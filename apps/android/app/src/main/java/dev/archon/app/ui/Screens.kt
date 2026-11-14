@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -86,6 +87,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -522,8 +524,9 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
     LaunchedEffect(reduce) { vm.setMetersVisible(!reduce) }
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.setMetersVisible(false) } }
 
-    val endpoint = link.endpoints[selected] ?: link.endpoints.values.firstOrNull { it.isDefault }
-        ?: link.endpoints.values.minByOrNull { it.name }
+    val outputs = link.outputs
+    val endpoint = link.endpoints[selected]?.takeIf { !it.input } ?: outputs.firstOrNull()
+    val mic = link.microphone
     val sources = link.sources.values.filter { it.endpointId == endpoint?.id }
         .sortedWith(compareBy<Source> { it.system }.thenByDescending { it.playing }.thenBy { it.name.lowercase() })
 
@@ -536,13 +539,13 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Row(
                     Modifier.heightIn(min = 48.dp).background(Archon.Surface, CircleShape)  // 48 dp touch target
-                        .clickable(enabled = link.endpoints.size > 1) { devices = true }
+                        .clickable(enabled = outputs.size > 1) { devices = true }
                         .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(endpoint?.name ?: target.name, style = Type.Caption, color = Archon.Paper,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    if (link.endpoints.size > 1) {
+                    if (outputs.size > 1) {
                         Spacer(Modifier.width(4.dp))
                         Icon(Glyphs.Chevron, contentDescription = stringResource(R.string.a11y_choose_device),
                             tint = Archon.Muted, modifier = Modifier.size(14.dp))
@@ -550,8 +553,7 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
                 }
                 DropdownMenu(expanded = devices, onDismissRequest = { devices = false }, containerColor = Archon.Surface,
                     shape = RoundedCornerShape(20.dp)) {
-                    link.endpoints.values.sortedWith(compareByDescending<Endpoint> { it.isDefault }.thenBy { it.name.lowercase() })
-                        .forEach { e ->
+                    outputs.forEach { e ->
                             DropdownMenuItem(
                                 text = {
                                     Text(e.name + if (e.isDefault) "  ·  " + stringResource(R.string.default_device) else "",
@@ -571,6 +573,13 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
                 },
                 contentAlignment = Alignment.Center,
             ) { Dot(dotColor) }
+            if (link.canPanic) {
+                IconButton(onClick = { vm.togglePanic() }) {
+                    Icon(Glyphs.Panic,
+                        contentDescription = stringResource(if (link.panic) R.string.panic_off else R.string.panic_on),
+                        tint = if (link.panic) Archon.Error else Archon.Paper)
+                }
+            }
             Box {
                 IconButton(onClick = { menu = true }) {
                     Icon(Glyphs.More, contentDescription = stringResource(R.string.a11y_more), tint = Archon.Paper)
@@ -621,11 +630,25 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
                 .then(if (live) Modifier else Modifier.clearAndSetSemantics { contentDescription = reconnectingText }),
             userScrollEnabled = live,
         ) {
+            if (link.panic) item(span = { GridItemSpan(2) }, key = "panic") {
+                PanicBanner(vm)
+            }
             if (endpoint != null) item(span = { GridItemSpan(2) }, key = "master") {
                 MasterArc(endpoint, reduce, vm)
             }
+            if (mic != null) item(key = "mic") {
+                // Same card as an app, driving the microphone endpoint.
+                val micLevel = levels[mic.meter] ?: 0f
+                AppCard(
+                    Source(mic.id, "", stringResource(R.string.microphone), "", mic.volume, mic.muted,
+                        playing = micLevel > 0.02f, system = false, meter = mic.meter),
+                    null, micLevel, reduce, vm, Modifier.appear(0, reduce), endpointCard = true,
+                    glyph = if (mic.muted) Glyphs.MicOff else Glyphs.Mic, a11yExtra = mic.name,
+                )
+            }
             itemsIndexed(sources, key = { _, s -> s.id }) { i, s ->
-                AppCard(s, icons[s.iconKey], levels[s.meter] ?: 0f, reduce, vm, Modifier.appear(i, reduce))
+                AppCard(s, icons[s.iconKey], levels[s.meter] ?: 0f, reduce, vm, Modifier.appear(i + 1, reduce),
+                    outputs = if (link.canRoute && !s.system) outputs else emptyList())
             }
             if (sources.isEmpty()) item(span = { GridItemSpan(2) }) {
                 Text(stringResource(R.string.no_sources), style = Type.Caption, color = Archon.Muted,
@@ -711,14 +734,24 @@ private fun MasterArc(e: Endpoint, reduce: Boolean, vm: ArchonUi) {
 }
 
 @Composable
-private fun AppCard(s: Source, icon: ImageBitmap?, level: Float, reduce: Boolean, vm: ArchonUi, modifier: Modifier) {
+private fun AppCard(
+    s: Source, icon: ImageBitmap?, level: Float, reduce: Boolean, vm: ArchonUi, modifier: Modifier,
+    endpointCard: Boolean = false,          // the microphone card drives an endpoint, not a source
+    glyph: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    a11yExtra: String? = null,
+    outputs: List<Endpoint> = emptyList(),  // non-empty: long-press chooses this app's output
+) {
     val name = if (s.system) stringResource(R.string.system_sounds) else s.name
+    var routeMenu by remember { mutableStateOf(false) }
+    val routedTo = outputs.firstOrNull { it.id == s.route }?.name
+    val outputLabel = stringResource(R.string.app_output)
+    val pcDefault = stringResource(R.string.pc_default)
     val drag = remember(s.id) { VolumeDrag() }
     val shown = rememberShownVolume(s.volume, drag, reduce)
     val pct = (shown * 100).roundToInt()
     val active = drag.dragging || drag.holding
     val px = with(LocalDensity.current) { 220.dp.toPx() }
-    val (start0, move0, end0) = volumeDragHandler(drag, s.volume, px) { vm.setVolume(false, s.id, it) }
+    val (start0, move0, end0) = volumeDragHandler(drag, s.volume, px) { vm.setVolume(endpointCard, s.id, it) }
     val start by androidx.compose.runtime.rememberUpdatedState(start0)
     val move by androidx.compose.runtime.rememberUpdatedState(move0)
     val end by androidx.compose.runtime.rememberUpdatedState(end0)
@@ -736,11 +769,23 @@ private fun AppCard(s: Source, icon: ImageBitmap?, level: Float, reduce: Boolean
                     move(dx)
                 }
             }
+            .then(if (outputs.isNotEmpty()) Modifier.pointerInput(s.id) {
+                detectTapGestures(onLongPress = { routeMenu = true })
+            } else Modifier)
             .semantics {
-                contentDescription = name + (if (s.playing) ", $playing" else "") + (if (s.muted) ", $muted" else "")
+                contentDescription = name + (if (a11yExtra != null) ", $a11yExtra" else "") +
+                    (if (s.playing) ", $playing" else "") + (if (s.muted) ", $muted" else "") +
+                    (if (routedTo != null) ", $outputLabel: $routedTo" else "")
                 stateDescription = "$pct%"
                 progressBarRangeInfo = ProgressBarRangeInfo(shown, 0f..1f)
-                setProgress { v -> vm.setVolume(false, s.id, (v * NativeClient.MAX_VOLUME).roundToInt()); true }
+                setProgress { v -> vm.setVolume(endpointCard, s.id, (v * NativeClient.MAX_VOLUME).roundToInt()); true }
+                if (outputs.isNotEmpty()) {
+                    customActions = listOf(androidx.compose.ui.semantics.CustomAccessibilityAction("$outputLabel: $pcDefault") {
+                        vm.setRoute(s.id, ""); true
+                    }) + outputs.map { o ->
+                        androidx.compose.ui.semantics.CustomAccessibilityAction("$outputLabel: ${o.name}") { vm.setRoute(s.id, o.id); true }
+                    }
+                }
             },
     ) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -758,7 +803,9 @@ private fun AppCard(s: Source, icon: ImageBitmap?, level: Float, reduce: Boolean
                         Modifier.size(tile).background(Archon.Raised, RoundedCornerShape(14.dp)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (icon != null) Image(icon, contentDescription = null,
+                        if (glyph != null) Icon(glyph, contentDescription = null,
+                            tint = if (s.muted) Archon.Muted else Archon.Paper, modifier = Modifier.size(tile * 0.5f))
+                        else if (icon != null) Image(icon, contentDescription = null,
                             modifier = Modifier.size(tile * 0.66f).alpha(if (s.muted) 0.45f else 1f))
                         else Text(name.take(1).uppercase(), style = Type.Body, color = Archon.Muted)
                     }
@@ -773,11 +820,49 @@ private fun AppCard(s: Source, icon: ImageBitmap?, level: Float, reduce: Boolean
                 Text(name, style = Type.Caption, color = if (s.muted) Archon.Muted else Archon.Paper,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            if (routedTo != null) {
+                // Pinned to a specific output (long-press to change).
+                Text("\u2192 $routedTo", style = Type.Caption, color = Archon.Muted, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 14.dp))
+            }
         }
         }
         Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
-            MuteButton(name, s.muted, { vm.setMute(false, s.id, !s.muted) })
+            MuteButton(name, s.muted, { vm.setMute(endpointCard, s.id, !s.muted) })
         }
+        DropdownMenu(expanded = routeMenu, onDismissRequest = { routeMenu = false }, containerColor = Archon.Surface,
+            shape = RoundedCornerShape(20.dp)) {
+            Text(outputLabel, style = Type.Caption, color = Archon.Muted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            DropdownMenuItem(
+                text = { Text(pcDefault, style = Type.Caption, color = if (s.route.isEmpty()) Archon.Accent else Archon.Paper) },
+                onClick = { vm.setRoute(s.id, ""); routeMenu = false },
+            )
+            outputs.forEach { o ->
+                DropdownMenuItem(
+                    text = { Text(o.name, style = Type.Caption, color = if (s.route == o.id) Archon.Accent else Archon.Paper) },
+                    onClick = { vm.setRoute(s.id, o.id); routeMenu = false },
+                )
+            }
+        }
+    }
+}
+
+/** Shown while the panic mute is on: the one place to undo it. */
+@Composable
+private fun PanicBanner(vm: ArchonUi) {
+    Row(
+        Modifier.fillMaxWidth().background(Archon.Surface, RoundedCornerShape(20.dp)).padding(start = 16.dp, end = 8.dp)
+            .heightIn(min = 56.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Dot(Archon.Error)
+        Spacer(Modifier.width(12.dp))
+        Text(stringResource(R.string.panic_active), style = Type.Caption, color = Archon.Paper, modifier = Modifier.weight(1f))
+        Box(
+            Modifier.heightIn(min = 48.dp).padding(vertical = 6.dp).background(Archon.Accent, CircleShape)
+                .clickable { vm.togglePanic() }.padding(horizontal = 16.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) { Text(stringResource(R.string.panic_undo), style = Type.Caption, color = Archon.Ink) }
     }
 }
 

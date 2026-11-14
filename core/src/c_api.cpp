@@ -18,7 +18,7 @@ struct Bridge final : arc::ClientListener {
         arc_event e;
         std::memset(&e, 0, sizeof e);
         e.type = t;
-        e.message = e.id = e.endpoint_id = e.name = e.icon_key = "";
+        e.message = e.id = e.endpoint_id = e.name = e.icon_key = e.route = "";
         return e;
     }
 
@@ -60,6 +60,8 @@ struct Bridge final : arc::ClientListener {
                 e.muted = ev.endpoint.muted;
                 e.is_default = ev.endpoint.is_default;
                 e.meter = ev.endpoint.meter;
+                e.input = ev.endpoint.input ? 1 : 0;
+                e.is_default_input = ev.endpoint.is_default_input ? 1 : 0;
                 cb(user, &e);
                 return;
             }
@@ -75,6 +77,7 @@ struct Bridge final : arc::ClientListener {
                 e.playing = ev.source.playing;
                 e.system_sounds = ev.source.system_sounds;
                 e.meter = ev.source.meter;
+                e.route = ev.source.route.c_str();
                 cb(user, &e);
                 return;
             }
@@ -90,6 +93,14 @@ struct Bridge final : arc::ClientListener {
                 e.icon_key = ev.id.c_str();
                 e.data = ev.data.data();
                 e.data_len = ev.data.size();
+                cb(user, &e);
+                return;
+            }
+            case K::AgentInfo: {
+                arc_event e = blank(ARC_EV_AGENT_INFO);
+                e.features = ev.agent.features;
+                e.panic = ev.agent.panic ? 1 : 0;
+                e.message = ev.agent.os.c_str();
                 cb(user, &e);
                 return;
             }
@@ -194,6 +205,14 @@ void arc_client_request_icon(arc_client* c, const char* key) {
 }
 void arc_client_set_meters(arc_client* c, int on) {
     if (c) c->client->set_meters(on != 0);
+}
+
+void arc_client_set_source_route(arc_client* c, const char* source_id, const char* endpoint_id) {
+    if (c && source_id) c->client->set_source_route(source_id, endpoint_id ? endpoint_id : "");
+}
+
+void arc_client_panic_mute(arc_client* c, int on) {
+    if (c) c->client->panic_mute(on != 0);
 }
 
 void arc_client_refresh(arc_client* c) {

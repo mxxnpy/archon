@@ -16,12 +16,16 @@ struct MixerView: View {
                 VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 12) {
+                        if model.panic { PanicBanner() }
                         if let e = model.currentEndpoint { MasterArc(endpoint: e) }
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                                   spacing: 12) {
+                            if let mic = model.microphone {
+                                MicCard(endpoint: mic, level: model.levels[mic.meter] ?? 0).appear(0)
+                            }
                             ForEach(Array(model.currentSources.enumerated()), id: \.element.id) { i, s in
                                 AppCard(source: s, icon: model.icons[s.iconKey], level: model.levels[s.meter] ?? 0)
-                                    .appear(i)
+                                    .appear(i + 1)
                             }
                         }
                         if model.currentSources.isEmpty {
@@ -66,7 +70,7 @@ struct MixerView: View {
             .accessibilityLabel("Voltar")
             Spacer(minLength: 0)
             Menu {
-                ForEach(model.endpoints.values.sorted { ($0.isDefault ? 0 : 1, $0.name) < ($1.isDefault ? 0 : 1, $1.name) }) { e in
+                ForEach(model.outputs) { e in
                     Button { model.selectedEndpoint = e.id } label: {
                         if e.id == model.currentEndpoint?.id { Label(e.name, systemImage: "checkmark") } else { Text(e.name) }
                     }
@@ -75,18 +79,27 @@ struct MixerView: View {
                 HStack(spacing: 4) {
                     Text(model.currentEndpoint?.name ?? target.name).font(.archonCaption).foregroundStyle(Archon.paper)
                         .lineLimit(1)
-                    if model.endpoints.count > 1 {
+                    if model.outputs.count > 1 {
                         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Archon.muted)
                     }
                 }
                 .padding(.horizontal, 14).frame(minHeight: 44)  // 44 pt touch target
                 .background(Archon.surface, in: Capsule())
             }
-            .disabled(model.endpoints.count < 2)
+            .disabled(model.outputs.count < 2)
             .accessibilityLabel("Escolher dispositivo de saída")
             Spacer(minLength: 0)
             Dot(color: linkColor).frame(width: 44, height: 44)
                 .accessibilityLabel(Text(linkText))
+            if model.canPanic {
+                Button { model.togglePanic() } label: {
+                    Image(systemName: model.panic ? "speaker.slash.circle.fill" : "speaker.slash.circle")
+                        .font(.system(size: 22, weight: .regular))
+                        .foregroundStyle(model.panic ? Archon.error : Archon.paper)
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(model.panic ? "Reativar o som do PC" : "Silenciar tudo no PC")
+            }
             Menu {
                 Button("Esquecer computador", role: .destructive) { confirmForget = true }
             } label: {
@@ -238,6 +251,18 @@ struct MasterArc: View {
 
 struct AppCard: View {
     let source: Source
+    private var routedName: String? {
+        guard !source.route.isEmpty else { return nil }
+        return model.endpoints[source.route]?.name
+    }
+
+    private func spoken(_ name: String) -> String {
+        var s = name
+        if source.playing { s += String(localized: ", tocando") }
+        if source.muted { s += String(localized: ", mudo") }
+        if let out = routedName { s += String(localized: ", saída ") + out }
+        return s
+    }
     @ScaledMetric(relativeTo: .title) private var pctSize: CGFloat = 26
     let icon: UIImage?
     let level: Double
@@ -282,11 +307,16 @@ struct AppCard: View {
                     Text(name).font(.archonCaption).foregroundStyle(source.muted ? Archon.muted : Archon.paper).lineLimit(1)
                 }
                 .padding(.horizontal, 14)
+                if let out = routedName {
+                    // Pinned to a specific output (long-press to change).
+                    Text("→ \(out)").font(.archonCaption).foregroundStyle(Archon.muted).lineLimit(1)
+                        .padding(.horizontal, 14).padding(.top, -6)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 16).padding(.bottom, 18)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(name + (source.playing ? String(localized: ", tocando") : "") + (source.muted ? String(localized: ", mudo") : ""))
+            .accessibilityLabel(spoken(name))
             .accessibilityValue("\(pct)%")
             .accessibilityAdjustableAction { dir in
                 let step = CoreClient.maxVolume / 20
@@ -300,6 +330,20 @@ struct AppCard: View {
         }
         .background(Archon.surface, in: RoundedRectangle(cornerRadius: 24))
         .contentShape(RoundedRectangle(cornerRadius: 24))
+        .contextMenu {
+            if model.canRoute && !source.system {
+                Section("Saída deste app") {
+                    Button { model.setRoute(source: source.id, endpoint: "") } label: {
+                        if source.route.isEmpty { Label("Padrão do PC", systemImage: "checkmark") } else { Text("Padrão do PC") }
+                    }
+                    ForEach(model.outputs) { e in
+                        Button { model.setRoute(source: source.id, endpoint: e.id) } label: {
+                            if source.route == e.id { Label(e.name, systemImage: "checkmark") } else { Text(e.name) }
+                        }
+                    }
+                }
+            }
+        }
         // Horizontal drag changes the volume; vertical drags keep scrolling the grid.
         .simultaneousGesture(
             DragGesture(minimumDistance: 8)
@@ -314,5 +358,104 @@ struct AppCard: View {
                 .onEnded { _ in if drag.dragging { drag.end() } }
         )
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// The PC's microphone: same ring language as the app cards.
+struct MicCard: View {
+    let endpoint: Endpoint
+    let level: Double
+    @ScaledMetric(relativeTo: .title) private var pctSize: CGFloat = 26
+    @EnvironmentObject var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduce
+    @StateObject private var drag = DragState()
+
+    var body: some View {
+        let shown = drag.shown(remote: endpoint.volume)
+        let pct = Int((shown * 100).rounded())
+        let active = drag.dragging || drag.holding
+        let name = String(localized: "Microfone")
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 10) {
+                ZStack {
+                    VolumeArc(fraction: shown, lineWidth: active ? 6 : 4,
+                              color: endpoint.muted ? Archon.edge : Archon.accent, thumbRadius: active ? 7 : 0)
+                        .animation(drag.dragging || reduce ? nil : Motion.arc, value: shown)
+                    if active {
+                        Text("\(pct)").font(.system(size: min(pctSize, 26 * 1.3), weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Archon.paper)
+                    } else {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 14).fill(Archon.raised)
+                            Image(systemName: endpoint.muted ? "mic.slash" : "mic")
+                                .font(.system(size: 20, weight: .regular))
+                                .foregroundStyle(endpoint.muted ? Archon.muted : Archon.paper)
+                        }
+                        .frame(width: 48, height: 48)
+                    }
+                }
+                .frame(width: 96, height: 96)
+                HStack(spacing: 6) {
+                    if !endpoint.muted && level > 0.02 {
+                        Dot(color: Archon.ok, opacity: reduce ? 1 : 0.55 + 0.45 * min(max(level, 0), 1))
+                            .animation(.linear(duration: 0.05), value: level)
+                    }
+                    Text(name).font(.archonCaption).foregroundStyle(endpoint.muted ? Archon.muted : Archon.paper).lineLimit(1)
+                }
+                .padding(.horizontal, 14)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 16).padding(.bottom, 18)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(name + ", " + endpoint.name + (endpoint.muted ? String(localized: ", mudo") : ""))
+            .accessibilityValue("\(pct)%")
+            .accessibilityAdjustableAction { dir in
+                let step = CoreClient.maxVolume / 20
+                let v = endpoint.volume + (dir == .increment ? step : -step)
+                model.setVolume(endpoint: true, id: endpoint.id, volume: min(max(v, 0), CoreClient.maxVolume))
+            }
+            MuteButton(label: name, muted: endpoint.muted) {
+                model.setMute(endpoint: true, id: endpoint.id, muted: !endpoint.muted)
+            }
+            .padding(4)
+        }
+        .background(Archon.surface, in: RoundedRectangle(cornerRadius: 24))
+        .contentShape(RoundedRectangle(cornerRadius: 24))
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 8)
+                .onChanged { g in
+                    if !drag.dragging {
+                        guard abs(g.translation.width) > abs(g.translation.height) else { return }
+                        drag.begin(remote: endpoint.volume)
+                    }
+                    let v = drag.move(delta: g.translation.width, fullRange: 220)
+                    model.setVolume(endpoint: true, id: endpoint.id, volume: v)
+                }
+                .onEnded { _ in if drag.dragging { drag.end() } }
+        )
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// Shown while the panic mute is on: the one place to undo it.
+struct PanicBanner: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Dot(color: Archon.error)
+            Text("Tudo silenciado no PC").font(.archonCaption).foregroundStyle(Archon.paper)
+            Spacer(minLength: 0)
+            Button { model.togglePanic() } label: {
+                Text("Reativar").font(.archonCaption.weight(.semibold)).foregroundStyle(Archon.ink)
+                    .padding(.horizontal, 16).frame(minHeight: 36)
+                    .background(Archon.accent, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .frame(minHeight: 44)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 6)
+        .background(Archon.surface, in: RoundedRectangle(cornerRadius: 20))
+        .accessibilityElement(children: .combine)
     }
 }

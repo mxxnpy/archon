@@ -46,6 +46,14 @@ public:
     // Start/stop sampling peak levels (~20 Hz) and reporting them via AudioSink::meters.
     // Only on while at least one controller shows the mixer, to save CPU and battery.
     virtual void set_metering(bool on) { (void)on; }
+    // 1.2: pin a source to an output endpoint (empty = follow the default).
+    virtual void set_source_route(const std::string& source_id, const std::string& endpoint_id) {
+        (void)source_id;
+        (void)endpoint_id;
+    }
+    // 1.2: kFeatureInputs / kFeatureRouting this backend supports (panic is generic).
+    virtual uint32_t features() const { return 0; }
+    virtual std::string os_name() const { return {}; }
 };
 
 struct PairedController {
@@ -85,6 +93,8 @@ public:
     virtual void on_log(const std::string& /*line*/) {}
     // Pairing lockout state changed (persist it so restarts don't reset escalation).
     virtual void on_pairing_lockout(int /*lockouts*/, int64_t /*locked_until_unix*/) {}
+    // Panic mute turned on/off (by a controller or locally).
+    virtual void on_panic_changed(bool /*active*/) {}
 };
 
 struct ServerConfig {
@@ -134,6 +144,8 @@ public:
     // Local action on the PC: lift a pairing lockout now (the escalation count
     // stays until a pairing succeeds).
     void reset_pairing_lockout();
+    // Local panic mute (tray, hotkey): same as a controller's PANIC_MUTE.
+    void panic_mute(bool on);
 
     // AudioSink (thread-safe)
     void endpoint_upsert(const EndpointInfo& e) override;

@@ -60,4 +60,16 @@
     <string name="err_not_recognized">This PC didn\'t recognize this phone. If you removed the pairing on the PC, pair again.</string>
     <string name="err_wrong_agent">Found a different device at the PC\'s address. Retrying…</string>
     <string name="pair_again">Pair again</string>
+    <string name="microphone">Microphone</string>
+    <string name="panic_on">Mute everything on the PC</string>
+    <string name="panic_off">Unmute the PC</string>
+    <string name="panic_active">Everything on the PC is muted</string>
+    <string name="panic_undo">Unmute</string>
+    <string name="app_output">This app\'s output</string>
+    <string name="pc_default">PC default</string>
+    <string name="tile_label">Mute PC</string>
+    <string name="tile_no_pc">Pair a PC in Archon first</string>
+    <string name="tile_failed">Couldn\'t reach the PC</string>
+    <string name="tile_muted">Everything on the PC is muted</string>
+    <string name="tile_unmuted">The PC\'s sound is back on</string>
 </resources>

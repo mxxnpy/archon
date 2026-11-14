@@ -52,6 +52,27 @@ object Glyphs {
         stroke { moveTo(12f, 16f); lineTo(12f, 20f) }
     }
 
+    val Mic = glyph("mic") {
+        stroke { moveTo(9.5f, 7f); arcTo(2.5f, 2.5f, 0f, false, true, 14.5f, 7f); lineTo(14.5f, 11f); arcTo(2.5f, 2.5f, 0f, false, true, 9.5f, 11f); close() }
+        stroke { moveTo(6.5f, 11f); curveTo(6.5f, 18f, 17.5f, 18f, 17.5f, 11f) }
+        stroke { moveTo(12f, 16.5f); lineTo(12f, 20f) }
+    }
+
+    val MicOff = glyph("mic_off") {
+        stroke { moveTo(9.5f, 7f); arcTo(2.5f, 2.5f, 0f, false, true, 14.5f, 7f); lineTo(14.5f, 11f); arcTo(2.5f, 2.5f, 0f, false, true, 9.5f, 11f); close() }
+        stroke { moveTo(6.5f, 11f); curveTo(6.5f, 18f, 17.5f, 18f, 17.5f, 11f) }
+        stroke { moveTo(12f, 16.5f); lineTo(12f, 20f) }
+        stroke { moveTo(5f, 4f); lineTo(19f, 20f) }
+    }
+
+    /** Panic mute: a silenced speaker inside a circle. */
+    val Panic = glyph("panic") {
+        stroke { moveTo(21f, 12f); arcTo(9f, 9f, 0f, true, true, 3f, 12f); arcTo(9f, 9f, 0f, true, true, 21f, 12f) }
+        stroke { moveTo(7f, 10.5f); lineTo(9f, 10.5f); lineTo(11.5f, 8.5f); lineTo(11.5f, 15.5f); lineTo(9f, 13.5f); lineTo(7f, 13.5f); close() }
+        stroke { moveTo(14f, 10.5f); lineTo(17f, 13.5f) }
+        stroke { moveTo(17f, 10.5f); lineTo(14f, 13.5f) }
+    }
+
     val Bell = glyph("bell") {
         stroke { moveTo(6f, 16f); lineTo(6f, 11f); curveTo(6f, 7.7f, 8.7f, 5f, 12f, 5f); curveTo(15.3f, 5f, 18f, 7.7f, 18f, 11f); lineTo(18f, 16f); lineTo(19.5f, 17.5f); lineTo(4.5f, 17.5f); close() }
         stroke { moveTo(10f, 20f); lineTo(14f, 20f) }
