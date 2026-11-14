@@ -47,6 +47,8 @@ const wchar_t* kGlyphHeadphones = L"\xE7F6";
 
 constexpr float kTop = 64;       // top bar height
 constexpr float kCardH = 188, kPad = 24;
+constexpr float kRingCy = 72;    // card ring centre (8 px below the corner mute button)
+constexpr float kNameTop = 132;  // card name: 12 px under the ring
 constexpr float kSheet = 380;    // panel width
 
 std::wstring wstr(const std::string& s) { return to_wide(s); }
@@ -426,7 +428,16 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
         float ly = cy + R + 8 + 40 + 16;  // ring, mute button, gap
         const bool listening = streams_ > 0;
         const arc::Profile* ap = model_.active_profile();
-        const float ph = (ly - py) + (listening ? 28.f : 0.f) + (ap ? 28.f : 0.f) + 12;
+        float ph = (ly - py) + (listening ? 28.f : 0.f) + (ap ? 28.f : 0.f) + 12;
+        // Wide: end on the bottom of a row of cards, so both columns share their lines.
+        if (wide)
+            for (int rows = 1; rows < 10; ++rows) {
+                const float row_end = float(rows) * kCardH + float(rows - 1) * G;
+                if (row_end >= ph) {
+                    ph = row_end;
+                    break;
+                }
+            }
         Widget card;
         card.kind = Widget::Kind::Surface;
         card.key = "master-card";
@@ -438,7 +449,7 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
         h.key = "master-title";
         h.focusable = false;
         h.name = pt_ ? L"Volume geral" : L"Master volume";
-        h.r = D2D1::RectF(px + 4, py - 32, px + pw, py - 10);
+        h.r = D2D1::RectF(px, py - 32, px + pw, py - 10);
         add(h, !wide);
         Widget m;
         m.kind = Widget::Kind::MasterRing;
@@ -477,7 +488,7 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
     const float gx = wide ? x0 + M + kMasterW + 24 : x0 + M;
     const float gw = wide ? W - gx - M : W - 2 * M;
     const int cols = std::max(1, int((gw + G) / (kMinCard + G)));
-    const float cw = std::min(kMaxCard, (gw - G * float(cols - 1)) / float(cols));
+    const float cw = std::floor(std::min(kMaxCard, (gw - G * float(cols - 1)) / float(cols)));  // whole pixels: crisp edges
     float y = (wide ? top : master_bottom + 24) - scroll_;
     int col = 0;
     auto header = [&](const std::string& key, std::wstring s) {
@@ -486,7 +497,7 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
         h.key = key;
         h.focusable = false;
         h.name = std::move(s);
-        h.r = D2D1::RectF(gx + 4, y, gx + gw, y + 22);
+        h.r = D2D1::RectF(gx, y, gx + gw, y + 22);
         add(h, true);
         y += 22 + 10;
     };
@@ -527,7 +538,7 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
         m.target = target;
         m.on = muted;
         m.name = (pt_ ? L"Mutar " : L"Mute ") + w.name;  // checkbox: state read as checked / not checked
-        m.r = D2D1::RectF(w.r.right - 48, w.r.top + 8, w.r.right - 8, w.r.top + 48);
+        m.r = D2D1::RectF(w.r.right - 44, w.r.top + 4, w.r.right - 4, w.r.top + 44);
         add(w, true);
         add(m, true);
     };
@@ -551,7 +562,7 @@ void MixerWindow::layout_body(float x0, float y0, float W, float H) {
         e.key = "empty";
         e.focusable = false;
         e.name = pt_ ? L"Nenhum app usando este dispositivo agora." : L"No apps are using this device right now.";
-        e.r = D2D1::RectF(gx + 4, y, gx + gw, y + 32);
+        e.r = D2D1::RectF(gx, y, gx + gw, y + 32);
         add(e, true);
         y += 32 + G;
     }
@@ -582,9 +593,14 @@ void MixerWindow::layout_panel(float x0, float y0, float w, float h) {
         t.key = key;
         t.focusable = false;
         t.name = std::move(s);
+        const bool title = key.find(":title") != std::string::npos;
+        if (header && !title) {
+            y += 16;   // a section starts 24 px below the previous one (8 + 16)
+            hgt = 22;
+        }
         t.r = D2D1::RectF(l, y, r, y + hgt);
         add(t);
-        y += hgt + 6;
+        y += hgt + 8;
     };
     auto button = [&](Widget::Kind kind, const std::string& key, std::wstring name, std::function<void()> fn) {
         Widget b;
@@ -645,7 +661,9 @@ void MixerWindow::layout_panel(float x0, float y0, float w, float h) {
             Widget ap;
             ap.kind = Widget::Kind::ProfileApply;
             ap.key = "p:" + p->id + ":apply";
-            ap.name = (pt_ ? L"Aplicar " : L"Apply ") + wstr(p->name);
+            ap.on = p->active;
+            ap.focusable = !p->active;  // in force already: shown as "Em uso"
+            ap.name = p->active ? (pt_ ? L"Em uso: " : L"In use: ") + wstr(p->name) : (pt_ ? L"Aplicar " : L"Apply ") + wstr(p->name);
             ap.r = D2D1::RectF(r - 140, y + 16, r - 52, y + 56);
             const std::string id = p->id;
             ap.invoke = [this, id] { send(arc::encode_id(arc::MsgType::ApplyProfile, id)); };
@@ -841,7 +859,7 @@ void MixerWindow::layout_panel(float x0, float y0, float w, float h) {
                                              : L"Ctrl+Alt+M is taken by another program."));
         text("s:net", (pt_ ? L"Rede do PC: " : L"PC's network: ") +
                           (model_.network.empty() ? std::wstring(pt_ ? L"nenhuma" : L"none") : wstr(model_.network)));
-        button(Widget::Kind::SecondaryButton, "s:log", pt_ ? L"Abrir o registro" : L"Open the log", [this] {
+        button(Widget::Kind::SecondaryButton, "s:log", pt_ ? L"Abrir log de diagnóstico" : L"Open diagnostic log", [this] {
             if (host_.open_log) host_.open_log();
         });
         text("s:version", L"Archon 1.0.0");
@@ -928,6 +946,12 @@ void MixerWindow::draw_widget(const Widget& w) {
         brush_->SetColor(col);
         rt_->FillRoundedRectangle(D2D1::RoundedRect(rr, rad, rad), brush_.Get());
     };
+    // 1 px edge so a control's boundary reaches 3:1 against its background (WCAG 1.4.11).
+    auto round_edge = [&](const D2D1_RECT_F& rr, float rad) {
+        brush_->SetColor(kEdge);
+        const D2D1_RECT_F in = D2D1::RectF(rr.left + 0.5f, rr.top + 0.5f, rr.right - 0.5f, rr.bottom - 0.5f);
+        rt_->DrawRoundedRectangle(D2D1::RoundedRect(in, rad, rad), brush_.Get(), 1);
+    };
     // Smoothly animated arc fraction (remote changes), instant while dragging or with reduce motion.
     auto arc_fraction = [&](const Widget& v) {
         const float target = float(shown_volume(v)) / 10000.f;
@@ -974,11 +998,18 @@ void MixerWindow::draw_widget(const Widget& w) {
                 brush_->SetColor(w.on ? kOk : kEdge);
                 const float cy = (r.top + r.bottom) / 2;
                 rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(r.left + 4, cy), 4, 4), brush_.Get());
-                draw_text(w.sub.empty() ? w.name : w.sub, D2D1::RectF(r.left + 16, r.top, r.right, r.bottom),
-                          f_caption_.Get(), w.on ? kPaper : kMuted);
+                if (w.sub.empty()) {
+                    draw_text(w.name, D2D1::RectF(r.left + 16, r.top, r.right, r.bottom), f_caption_.Get(),
+                              w.on ? kPaper : kMuted);
+                } else {  // narrow: a phone glyph and the count (screen readers keep the sentence)
+                    draw_glyph(L"\xE8EA", D2D1::RectF(r.left + 12, r.top, r.left + 30, r.bottom), 14, w.on ? kPaper : kMuted);
+                    draw_text(w.sub, D2D1::RectF(r.left + 32, r.top, r.right, r.bottom), f_caption_.Get(),
+                              w.on ? kPaper : kMuted);
+                }
             } else if (w.key == "e:name") {
-                draw_text(w.name, D2D1::RectF(r.left, r.top - 18, r.right, r.top), f_small_.Get(), kMuted);
+                draw_text(w.name, D2D1::RectF(r.left, r.top - 22, r.right, r.top - 4), f_caption_.Get(), kMuted);
                 round_fill(r, 12, kRaised);  // the text box itself is a child EDIT on top
+                round_edge(r, 12);
             } else if (!w.glyph.empty()) {
                 const float tw = text_width(w.name, f_caption_.Get(), r.right - r.left - 26);
                 const float lx = (r.left + r.right) / 2 - (tw + 26) / 2;
@@ -1024,13 +1055,21 @@ void MixerWindow::draw_widget(const Widget& w) {
             rt_->DrawTextLayout(D2D1::Point2F(left, top), lay.Get(), brush_.Get());
             // "%" sits on the number's baseline.
             const float base = top + line.baseline;
-            draw_text(L"%", D2D1::RectF(left + m.width + 3, base - 20, left + m.width + 3 + pct_w + 2, base + 2),
-                      f_body_.Get(), kMuted);
+            ComPtr<IDWriteTextLayout> pl;
+            dw_->CreateTextLayout(L"%", 1, f_body_.Get(), 40, 40, &pl);
+            if (pl) {
+                pl->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                DWRITE_LINE_METRICS plm{};
+                UINT32 pn = 0;
+                pl->GetLineMetrics(&plm, 1, &pn);
+                brush_->SetColor(kMuted);
+                rt_->DrawTextLayout(D2D1::Point2F(left + m.width + 3, base - plm.baseline), pl.Get(), brush_.Get());
+            }
             break;
         }
         case K::Card: {
             round_fill(r, 24, hover ? kHover : kSurface);
-            const float cx = (r.left + r.right) / 2, cy = r.top + 16 + 48;
+            const float cx = (r.left + r.right) / 2, cy = r.top + kRingCy;
             const bool active = drag_ >= 0 && widgets_[size_t(drag_)].key == w.key;
             draw_ring(D2D1::Point2F(cx, cy), 46, active ? 6.f : 4.f, arc_fraction(w), w.muted ? kEdge : kAccent,
                       active ? 7.f : 0.f);
@@ -1046,42 +1085,54 @@ void MixerWindow::draw_widget(const Widget& w) {
                     rt_->DrawBitmap(b, D2D1::RectF(cx - 16, cy - 16, cx + 16, cy + 16), w.muted ? 0.45f : 1.f);
                 } else {
                     const std::wstring mono = w.name.empty() ? L"?" : std::wstring(1, wchar_t(towupper(w.name[0])));
-                    draw_text(mono, D2D1::RectF(cx - 24, cy - 24, cx + 24, cy + 24), f_body_.Get(), kMuted,
-                              DWRITE_TEXT_ALIGNMENT_CENTER);
+                    draw_text(mono, D2D1::RectF(cx - 24, cy - 24, cx + 24, cy + 24), f_body_.Get(),
+                              w.muted ? rgb(0x9A9A9A, 0.45f) : kMuted, DWRITE_TEXT_ALIGNMENT_CENTER);
                 }
             }
             // Name (two lines for tabs), with the playing dot following the live level.
-            const float ny = r.top + 124;
+            const float ny = r.top + kNameTop;
             const bool dot = w.playing && !w.muted;
-            // The name is centred; the playing dot sits right before it (8 px, 6 px gap).
+            // The name is centred; the playing dot sits right before its first line (8 px, 6 px gap).
             const float avail = (r.right - r.left) - 28 - (dot ? 14.f : 0.f);
-            float text_w = avail;
-            {
-                ComPtr<IDWriteTextLayout> lay;
-                if (SUCCEEDED(dw_->CreateTextLayout(w.name.c_str(), UINT32(w.name.size()), f_caption_.Get(), avail,
-                                                    w.tab ? 38.f : 20.f, &lay))) {
-                    lay->SetWordWrapping(w.tab ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
-                    DWRITE_TEXT_METRICS m{};
-                    lay->GetMetrics(&m);
-                    text_w = std::min(avail, m.width);
-                }
+            ComPtr<IDWriteTextLayout> name;
+            dw_->CreateTextLayout(w.name.c_str(), UINT32(w.name.size()), f_caption_.Get(), avail, 40, &name);
+            float text_w = avail, name_h = 18, line1 = 9;
+            if (name) {
+                name->SetWordWrapping(w.tab ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
+                name->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                name->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                DWRITE_TRIMMING trim{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+                ComPtr<IDWriteInlineObject> ellipsis;
+                dw_->CreateEllipsisTrimmingSign(name.Get(), &ellipsis);
+                name->SetTrimming(&trim, ellipsis.Get());
+                DWRITE_TEXT_METRICS m{};
+                name->GetMetrics(&m);
+                text_w = std::min(avail, m.width);
+                name_h = std::min(m.height, 36.f);  // at most two lines
+                DWRITE_LINE_METRICS lm[2]{};
+                UINT32 n = 0;
+                name->GetLineMetrics(lm, 2, &n);
+                if (n > 0) line1 = lm[0].height / 2;
+                name->SetMaxWidth(text_w + 1);
+                name->SetMaxHeight(name_h + 1);
             }
             const float block = text_w + (dot ? 14.f : 0.f);
-            const float left = (r.left + r.right) / 2 - block / 2;
+            const float left = std::floor((r.left + r.right) / 2 - block / 2);
             if (dot) {
                 const float lvl = w.meter ? model_.level(w.meter) : 1.f;
                 brush_->SetColor(kOk);
                 brush_->SetOpacity(reduce_motion_ ? 1.f : 0.55f + 0.45f * std::clamp(lvl, 0.f, 1.f));
-                rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(left + 4, ny + 10), 4, 4), brush_.Get());
+                rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(left + 4, ny + line1), 4, 4), brush_.Get());
                 brush_->SetOpacity(1.f);
             }
-            const float tx = left + (dot ? 14.f : 0.f);
-            draw_text(w.name, D2D1::RectF(tx, ny, tx + text_w + 1, ny + (w.tab ? 38.f : 20.f)), f_caption_.Get(),
-                      w.muted ? kMuted : kPaper, DWRITE_TEXT_ALIGNMENT_CENTER, w.tab);
+            if (name) {
+                brush_->SetColor(w.muted ? kMuted : kPaper);
+                rt_->DrawTextLayout(D2D1::Point2F(left + (dot ? 14.f : 0.f), ny), name.Get(), brush_.Get(),
+                                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            }
             if (!w.sub.empty())
-                draw_text(w.sub, D2D1::RectF(r.left + 14, ny + (w.tab ? 38.f : 22.f), r.right - 14,
-                                             ny + (w.tab ? 58.f : 42.f)),
-                          f_small_.Get(), kMuted, DWRITE_TEXT_ALIGNMENT_CENTER);
+                draw_text(w.sub, D2D1::RectF(r.left + 14, ny + name_h + 2, r.right - 14, ny + name_h + 22), f_small_.Get(),
+                          kMuted, DWRITE_TEXT_ALIGNMENT_CENTER);
             break;
         }
         case K::Mute: {
@@ -1101,21 +1152,26 @@ void MixerWindow::draw_widget(const Widget& w) {
         }
         case K::ProfileRow: {
             round_fill(r, 20, kRaised);
-            float tx = r.left + 16;
+            const float tx = r.left + 20;  // name and summary share one column; the in-use dot hangs left of it
             if (w.on) {
                 brush_->SetColor(kAccent);
-                rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(tx + 4, r.top + 24), 4, 4), brush_.Get());
-                tx += 14;
+                rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(r.left + 10, r.top + 24), 3, 3), brush_.Get());
             }
             draw_text(w.name, D2D1::RectF(tx, r.top + 12, r.right - 150, r.top + 36), f_body_.Get(), kPaper);
-            draw_text(w.sub, D2D1::RectF(r.left + 16, r.top + 36, r.right - 150, r.bottom - 8), f_small_.Get(), kMuted);
+            draw_text(w.sub, D2D1::RectF(tx, r.top + 36, r.right - 150, r.bottom - 8), f_small_.Get(), kMuted);
             break;
         }
         case K::ProfileApply:
+            if (w.on) {  // the profile already in force: a label, not a button
+                draw_text(pt_ ? L"Em uso" : L"In use", r, f_caption_.Get(), kAccent, DWRITE_TEXT_ALIGNMENT_CENTER);
+            } else {
+                round_fill(r, (r.bottom - r.top) / 2, hover ? rgb(0x2A2A2A) : rgb(0x262626));
+                draw_text(pt_ ? L"Aplicar" : L"Apply", r, f_caption_.Get(), kPaper, DWRITE_TEXT_ALIGNMENT_CENTER);
+            }
+            break;
         case K::PrimaryButton:
             round_fill(r, (r.bottom - r.top) / 2, hover ? rgb(0xFFF1B8) : kAccent);
-            draw_text(w.kind == K::ProfileApply ? std::wstring(pt_ ? L"Aplicar" : L"Apply") : w.name, r,
-                      w.kind == K::ProfileApply ? f_caption_.Get() : f_body_.Get(), kInk, DWRITE_TEXT_ALIGNMENT_CENTER);
+            draw_text(w.name, r, f_body_.Get(), kInk, DWRITE_TEXT_ALIGNMENT_CENTER);
             break;
         case K::SecondaryButton:
             round_fill(r, (r.bottom - r.top) / 2, hover ? rgb(0x2A2A2A) : kRaised);
@@ -1132,6 +1188,7 @@ void MixerWindow::draw_widget(const Widget& w) {
             const float cy = (r.top + r.bottom) / 2;
             const D2D1_RECT_F tr = D2D1::RectF(r.right - 52, cy - 14, r.right, cy + 14);
             round_fill(tr, 14, w.on ? kAccent : kTrack);
+            if (!w.on) round_edge(tr, 14);
             brush_->SetColor(w.on ? kInk : kMuted);
             rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(w.on ? tr.right - 14 : tr.left + 14, cy), 10, 10), brush_.Get());
             break;
@@ -1140,6 +1197,11 @@ void MixerWindow::draw_widget(const Widget& w) {
             brush_->SetColor(w.on ? kAccent : kRaised);
             rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F((r.left + r.right) / 2, (r.top + r.bottom) / 2), 19, 19),
                              brush_.Get());
+            if (!w.on) {
+                brush_->SetColor(kEdge);
+                rt_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F((r.left + r.right) / 2, (r.top + r.bottom) / 2), 18.5f, 18.5f),
+                                 brush_.Get(), 1);
+            }
             draw_text(w.glyph, r, f_caption_.Get(), w.on ? kInk : kPaper, DWRITE_TEXT_ALIGNMENT_CENTER);
             break;
         case K::TimeStepper: {
@@ -1191,11 +1253,22 @@ void MixerWindow::paint() {
         if (!w.clipped) draw_widget(w);
     }
     if (grid_clipped) rt_->PopAxisAlignedClip();
+    if (scroll_max_ > 0) {  // the grid scrolls: show where (3 px, track + edge thumb)
+        const float top = grid_clip_.top + 8, bottom = grid_clip_.bottom - 8, h = bottom - top;
+        const float view = grid_clip_.bottom - grid_clip_.top;
+        const float th = std::max(32.f, h * view / (view + scroll_max_));
+        const float ty = top + (h - th) * (scroll_ / scroll_max_);
+        const float x = grid_clip_.right - 8;
+        brush_->SetColor(kTrack);
+        rt_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, top, x + 3, bottom), 1.5f, 1.5f), brush_.Get());
+        brush_->SetColor(kEdge);
+        rt_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, ty, x + 3, ty + th), 1.5f, 1.5f), brush_.Get());
+    }
     if (panel_ != Panel::None) {
         if (all.right < 760) {  // narrow: the sheet covers the body
         } else {
-            brush_->SetColor(rgb(0x000000, 0.5f));
-            rt_->FillRectangle(D2D1::RectF(0, kTop, panel_clip_.left, all.bottom), brush_.Get());
+            brush_->SetColor(kTrack);
+            rt_->FillRectangle(D2D1::RectF(panel_clip_.left - 1, kTop, panel_clip_.left, all.bottom), brush_.Get());
         }
         brush_->SetColor(kSurface);
         rt_->FillRectangle(panel_clip_, brush_.Get());
@@ -1359,7 +1432,7 @@ void MixerWindow::on_wheel(float x, float y, int delta, bool fine) {
         bool on_ring = false;
         if (w.kind == Widget::Kind::MasterRing) on_ring = true;
         if (w.kind == Widget::Kind::Card) {
-            const float cx = (w.r.left + w.r.right) / 2, cy = w.r.top + 64;
+            const float cx = (w.r.left + w.r.right) / 2, cy = w.r.top + kRingCy;
             on_ring = (x - cx) * (x - cx) + (y - cy) * (y - cy) <= 52 * 52;
         }
         if (on_ring) {

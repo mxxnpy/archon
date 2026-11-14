@@ -65,7 +65,8 @@ class MixerElement final : public IRawElementProviderSimple,
                            public IRawElementProviderFragment,
                            public IInvokeProvider,
                            public IRangeValueProvider,
-                           public IToggleProvider {
+                           public IToggleProvider,
+                           public IValueProvider {
 public:
     MixerElement(MixerUia* root, std::string key);
     void detach() { root_ = nullptr; }
@@ -94,6 +95,9 @@ public:
     HRESULT STDMETHODCALLTYPE get_Minimum(double* r) override;
     HRESULT STDMETHODCALLTYPE get_LargeChange(double* r) override;
     HRESULT STDMETHODCALLTYPE get_SmallChange(double* r) override;
+    // IValueProvider (output / choice lists: current value)
+    HRESULT STDMETHODCALLTYPE SetValue(LPCWSTR v) override;
+    HRESULT STDMETHODCALLTYPE get_Value(BSTR* r) override;
     // IToggleProvider (mute, switches, day chips)
     HRESULT STDMETHODCALLTYPE Toggle() override;
     HRESULT STDMETHODCALLTYPE get_ToggleState(ToggleState* r) override;

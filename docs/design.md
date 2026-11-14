@@ -100,17 +100,29 @@ It sees exactly what a paired phone sees (through the agent's local view).
   system title bar in dark mode. Opened by clicking the tray icon (Windows), the
   menu bar item (macOS) or the app launcher (Linux); closing hides it, the agent
   keeps running.
-- **Top bar** (56 px): output pill (device name ▾, opens the output list) ·
+- **Grid**: 8 px. Window margins 24, gaps 16, top bar 64.
+- **Top bar** (64 px, controls 40 px high, centred): output pill (device name ▾, opens the output list) ·
   phones line (`ok` dot + "2 celulares conectados", or `muted` "Nenhum celular
   conectado") · right: **Perfis**, **Silenciar tudo** (panic, `error` fill when
   on), **Configurações** — 40 px round `raised` buttons, 44 px hit target.
-- **Body**, width ≥ 760: a 320 px left column with the master arc (220 px), its
-  mute button, the "Ouvindo no celular" line while a phone listens and the
-  profile in force; the right side scrolls the card grid (mic + apps, then the
-  "Abas do navegador" header and the tab cards). Below 760: one column, master
-  arc 180 px on top.
-- **Cards** as on the phone (172 px wide, gap 12, columns fill the width).
-  Right-click an app card for its output menu.
+- **Body**, width ≥ 760: on the left a 296 px `surface` card (radius 24) with the
+  master arc (192 px, 8 px stroke), its mute button, the "Ouvindo no celular"
+  line while a phone listens and the profile in force, all centred; the card ends
+  on the bottom edge of a row of app cards. Its title "Volume geral" (caption,
+  `muted`) sits on the same line as the grid's first header. On the right the
+  card grid scrolls: header "Microfone e apps", cards, header "Abas do
+  navegador", tab cards. Below 760: one column that scrolls as a whole, master
+  arc 168 px.
+- **Cards** as on the phone (188 px high; width fills the columns, 168–232 px,
+  whole pixels; ring centre 72 px from the top, name 12 px under the ring, the
+  mute button in the corner 4 px in). Right-click an app card for its output
+  menu. A thin 3 px scroll indicator (`track` + `edge` thumb) shows when the
+  grid scrolls.
+- **Boundaries**: text fields, switches when off and day chips when off carry a
+  1 px `edge` outline (≥ 3:1, WCAG 1.4.11). The sheet is separated from the body
+  by a 1 px `track` line; the body is not dimmed (no off-palette tints).
+- **Accent budget**: in a panel only the primary action is `accent`; "Aplicar"
+  is a quiet `track` button and the profile in force reads "Em uso" in `accent`.
 - **Mouse**: drag along a ring or horizontally on a card; the wheel over a ring
   or card changes ±5 % per notch (±1 % with Shift). The hover state brightens a
   card from `surface` to `raised`; nothing else moves.

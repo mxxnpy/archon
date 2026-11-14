@@ -218,6 +218,8 @@ HRESULT MixerElement::QueryInterface(REFIID riid, void** out) {
         *out = static_cast<IRangeValueProvider*>(this);
     else if (riid == __uuidof(IToggleProvider))
         *out = static_cast<IToggleProvider*>(this);
+    else if (riid == __uuidof(IValueProvider))
+        *out = static_cast<IValueProvider*>(this);
     else {
         *out = nullptr;
         return E_NOINTERFACE;
@@ -244,6 +246,7 @@ Role role_of(const Widget& w) {
     switch (w.kind) {
         case K::MasterRing: case K::Card: return Role::Volume;
         case K::Mute: case K::Toggle: case K::DayChip: return Role::Toggle;
+        case K::IconButton: return w.key == "panic" ? Role::Toggle : Role::Invoke;  // panic is on/off
         case K::Text: case K::Header: return w.key == "e:name" ? Role::Text : Role::Text;
         case K::TimeStepper: return Role::Volume;  // minutes, as a range
         default: return Role::Invoke;
@@ -256,8 +259,9 @@ HRESULT MixerElement::GetPatternProvider(PATTERNID id, IUnknown** r) {
     const Widget* w = widget();
     if (!w) return UIA_E_ELEMENTNOTAVAILABLE;
     const Role role = role_of(*w);
+    const bool combo = w->kind == Widget::Kind::OutputPill || w->kind == Widget::Kind::Choice;
     if ((id == UIA_RangeValuePatternId && role == Role::Volume) || (id == UIA_TogglePatternId && role == Role::Toggle) ||
-        (id == UIA_InvokePatternId && role == Role::Invoke && w->invoke)) {
+        (id == UIA_InvokePatternId && role == Role::Invoke && w->invoke) || (id == UIA_ValuePatternId && combo)) {
         *r = static_cast<IRawElementProviderSimple*>(this);
         AddRef();
     }
@@ -272,13 +276,18 @@ HRESULT MixerElement::GetPropertyValue(PROPERTYID id, VARIANT* r) {
     switch (id) {
         case UIA_NamePropertyId: *r = bstr(w->name); break;
         case UIA_AutomationIdPropertyId: *r = bstr(std::wstring(w->key.begin(), w->key.end())); break;
-        case UIA_HelpTextPropertyId:
-            if (!w->sub.empty()) *r = bstr(w->sub);
+        case UIA_HelpTextPropertyId: {
+            // Cards: playing and where it goes (or the site of a tab), read after the name.
+            std::wstring help = w->sub;
+            if (w->kind == K::Card && w->playing && !w->muted) help = help.empty() ? L"tocando" : L"tocando, " + help;
+            if (!help.empty()) *r = bstr(help);
             break;
+        }
         case UIA_ControlTypePropertyId: {
             int t = UIA_ButtonControlTypeId;
             if (w->kind == K::MasterRing || w->kind == K::Card || w->kind == K::TimeStepper) t = UIA_SliderControlTypeId;
-            else if (w->kind == K::Mute || w->kind == K::Toggle || w->kind == K::DayChip) t = UIA_CheckBoxControlTypeId;
+            else if (w->kind == K::Mute || w->kind == K::Toggle || w->kind == K::DayChip || w->key == "panic")
+                t = UIA_CheckBoxControlTypeId;
             else if (w->kind == K::Header) t = UIA_HeaderControlTypeId;
             else if (w->kind == K::Text) t = UIA_TextControlTypeId;
             else if (w->kind == K::OutputPill || w->kind == K::Choice) t = UIA_ComboBoxControlTypeId;
@@ -392,11 +401,6 @@ HRESULT MixerElement::get_Value(double* r) {
     *r = w->kind == Widget::Kind::TimeStepper ? double(w->minutes) : double((w->volume * 100 + 5000) / 10000);
     return S_OK;
 }
-HRESULT MixerElement::get_IsReadOnly(BOOL* r) {
-    const Widget* w = widget();
-    *r = w && w->kind == Widget::Kind::TimeStepper;
-    return S_OK;
-}
 HRESULT MixerElement::get_Maximum(double* r) {
     const Widget* w = widget();
     *r = w && w->kind == Widget::Kind::TimeStepper ? 1439 : 100;
@@ -413,6 +417,21 @@ HRESULT MixerElement::get_LargeChange(double* r) {
 HRESULT MixerElement::get_SmallChange(double* r) {
     const Widget* w = widget();
     *r = w && w->kind == Widget::Kind::TimeStepper ? 15 : 5;
+    return S_OK;
+}
+
+// IValueProvider (output and choice lists: the current choice, read-only text).
+HRESULT MixerElement::SetValue(LPCWSTR) { return UIA_E_NOTSUPPORTED; }
+HRESULT MixerElement::get_Value(BSTR* r) {
+    const Widget* w = widget();
+    if (!w) return UIA_E_ELEMENTNOTAVAILABLE;
+    *r = SysAllocString(w->sub.c_str());
+    return S_OK;
+}
+HRESULT MixerElement::get_IsReadOnly(BOOL* r) {
+    // Shared by IRangeValueProvider and IValueProvider: lists are chosen through their menu.
+    const Widget* w = widget();
+    *r = w && (w->kind == Widget::Kind::TimeStepper || w->kind == Widget::Kind::OutputPill || w->kind == Widget::Kind::Choice);
     return S_OK;
 }
 
