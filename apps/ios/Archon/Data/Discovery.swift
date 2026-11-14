@@ -90,7 +90,10 @@ final class Discovery: ObservableObject {
                     if case .hostPort(let host, let port) = conn.currentPath?.remoteEndpoint {
                         let h: String
                         switch host {
-                        case .ipv4(let a): h = "\(a)"
+                        // Plain dotted quad: the description of an address taken from a live
+                        // path carries the interface ("192.168.0.5%en0"), which getaddrinfo
+                        // in the core doesn't accept for IPv4.
+                        case .ipv4(let a): h = a.rawValue.map(String.init).joined(separator: ".")
                         case .ipv6(let a): h = "\(a)"
                         case .name(let n, _): h = n
                         @unknown default: h = "\(host)"

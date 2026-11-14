@@ -792,6 +792,23 @@ TEST(integration_unlock_lifts_lock_but_keeps_escalation) {
     c.disconnect();
 }
 
+TEST(connect_accepts_ipv4_with_interface_suffix) {
+    // iOS prints addresses taken from a live path as "192.168.0.5%en0"; the
+    // phone gave up with "couldn't reach the PC" without sending a packet.
+    net::init();
+    uint16_t port = 0;
+    std::string err;
+    net::socket_t ls = net::listen_tcp(0, true, &port, &err);
+    REQUIRE(ls != net::kInvalidSocket);
+    for (const char* host : {"127.0.0.1%en0", "127.0.0.1%lo0", "127.0.0.1%1"}) {
+        net::socket_t s = net::connect_tcp(host, port, 2000, &err);
+        CHECK(s != net::kInvalidSocket);
+        if (s == net::kInvalidSocket) std::printf("  %s: %s\n", host, err.c_str());
+        else net::close_socket(s);
+    }
+    net::close_socket(ls);
+}
+
 TEST(lan_only_address_filter) {
     CHECK(net::is_local_network_address("192.168.0.10"));
     CHECK(net::is_local_network_address("10.1.2.3"));

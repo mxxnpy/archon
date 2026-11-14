@@ -167,7 +167,15 @@ socket_t connect_tcp(const std::string& host, uint16_t port, int timeout_ms, std
     hints.ai_protocol = IPPROTO_TCP;
     addrinfo* res = nullptr;
     const std::string port_s = std::to_string(port);
-    if (getaddrinfo(host.c_str(), port_s.c_str(), &hints, &res) != 0 || !res) {
+    // An interface suffix ("192.168.0.5%en0", as some platform APIs print
+    // addresses) is meaningless for IPv4 and makes getaddrinfo treat the
+    // literal as a host name. Keep it for IPv6, where it is the scope id.
+    std::string target = host;
+    if (const size_t pct = target.find('%'); pct != std::string::npos) {
+        in_addr v4{};
+        if (inet_pton(AF_INET, target.substr(0, pct).c_str(), &v4) == 1) target.resize(pct);
+    }
+    if (getaddrinfo(target.c_str(), port_s.c_str(), &hints, &res) != 0 || !res) {
         if (err) *err = "cannot resolve " + host;
         return kInvalidSocket;
     }
