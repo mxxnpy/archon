@@ -1,0 +1,148 @@
+# Direction — Archon (iOS / Android / Windows tray agent)
+
+Status: **APPROVED by the owner on 13/11/2026 — Halo v2** (single refined direction).
+Key frame: `.creative/directions/direction-b2.html` (430×932 iPhone 14 Plus screens + Windows popup).
+
+## History (why this direction)
+
+| Round | What was shown | Owner verdict |
+| --- | --- | --- |
+| 1 | `docs/design.md`: flat black list, thin yellow slider, tiny dots, no motion | "muito simples… deixe bonito, animado" |
+| 2 draft | A "Mesa" (console strips, faders, VU meters), B "Halo" (rings, glow, warm neutrals), C "Faixa" (full-yellow fill rows) — `directions/direction-a/b/c.html` | A: "muito estourado de elemento, muito vintage… não uma mesa de som". B: liked the code ring, the radar and the mixer, but "muitos elementos" and "ainda muito vintage". |
+| 2 refined | **Halo v2** (this file) | pending |
+
+Rejected and not to return: hardware skeuomorphism (faders, knobs, VU/LED meters, rack units, recessed displays), warm/cream neutrals, amber glow and bloom, vignettes, textures, rounded "friendly" display type, caption text inside screens, multiple badges per item. The A/B/C draft files are kept only as the record of what was rejected.
+
+## Invariants
+
+- Name **Archon**. Palette: black, white, pastel yellow; green / red / yellow only as small status indicators. No other hues.
+- Journey: computers on the network → pairing code → mixer; Windows tray popup shows the code.
+- Mixer structure: output device, master volume + mute, one card per app (icon, name, playing state, volume, mute).
+- WCAG 2.2 AA in the only theme (dark): text ≥ 4.5:1, UI boundaries and state graphics ≥ 3:1. State never by colour alone. Targets ≥ 44 pt / 48 dp. Reduce Motion honoured.
+- Native only: SwiftUI and Jetpack Compose with platform SDK; no third-party UI libraries.
+
+## Concept
+
+> **Halo v2 — o volume é um anel.** A calm, modern black app where every volume is a thin pastel-yellow arc: one large arc for the master, one small arc around each app icon. Everything else steps back.
+
+Axes: plain ●●●●○ (flat, no bloom) · airy ●●●○○ · instrumental motion (short, functional).
+
+## Principles (verifiable)
+
+1. **One ring = one volume.** The only yellow on the mixer is the volume arcs and the primary action. No yellow decoration.
+2. **One status per item.** A card or row shows at most one status mark (a dot or the red mute button), never a dot + chip + label.
+3. **Numbers only when they matter.** The master shows its %; app cards show % only while being dragged (it replaces the icon inside the ring).
+4. **No captions inside screens.** Explanatory text exists only in empty / error states.
+5. **Flat and crisp.** No glow, blur bloom, gradients or texture. Depth = surface step (#000 → #111 → #1C1C1C) only.
+6. **Motion confirms, never decorates.** ≤ 240 ms UI transitions; the only loop is the radar pulse while searching.
+
+## Typography
+
+- iOS: **SF Pro** (system). Android: **Roboto** (system). Windows agent: **Segoe UI Variable**. No bundled font. (Inter, OFL 1.1, is used in the HTML preview only as a stand-in for SF Pro.)
+- Tabular figures for all numbers (`.monospacedDigit()` / `fontFeatureSettings = "tnum"`).
+- Scale (pt/sp): caption 13/400 · body 15–16/500 · title 26/600 · large title 34/600 · card % 26/600 · code orb 24/600 · ring counter 44/600 · master value 64/600 (tracking −3 %). Dynamic Type / font scale supported; the master value caps at 1.3× and the card % falls back to the icon slot.
+
+## Colour tokens (single dark theme)
+
+| Token | Hex | Role | Contrast (measured, WCAG 2.x) |
+| --- | --- | --- | --- |
+| `bg` | `#000000` | screen background | — |
+| `surface` | `#111111` | cards, list rows, popup | — |
+| `raised` | `#1C1C1C` | buttons, empty orbs, keys, icon tile | — |
+| `track` | `#262626` | unlit part of rings, radar orbits | 1.25:1 vs surface — **decorative only**; the value is read from the lit arc + thumb |
+| `edge` | `#6B6B6B` | muted-app arc, control outline | 3.54:1 vs surface · 3.94:1 vs bg |
+| `paper` | `#FFFFFF` | primary text, master value, ring thumb | 21.00:1 vs bg · 18.88:1 vs surface · 17.04:1 vs raised |
+| `muted` | `#9A9A9A` | secondary text, inactive names, idle icons | 7.46:1 vs bg · 6.71:1 vs surface · 6.06:1 vs raised |
+| `accent` | `#F6E7A1` | volume arc, filled code orb, progress arc, primary button | 16.86:1 vs bg · 15.16:1 vs surface · 12.15:1 vs track |
+| `ink` | `#000000` | text/icon on accent and on error | 16.86:1 on accent · 7.77:1 on error |
+| `ok` | `#6FD39B` | connected / available / playing dot | 11.47:1 vs bg · 10.31:1 vs surface |
+| `warn` | `#F2CF5B` | reconnecting / waiting for code | 13.85:1 vs bg · 12.46:1 vs surface |
+| `error` | `#F07A7A` | offline, failed, muted button fill | 7.77:1 vs bg · 6.99:1 vs surface |
+
+Ratios computed with the WCAG relative-luminance formula (Node script, sRGB hex); all text pairs ≥ 4.5:1, all state graphics ≥ 3:1.
+
+## Shape, depth, icons
+
+- Radii: cards 24 · list rows 20 · keys 8 · popup 8 (Windows 11) · buttons and orbs fully round.
+- Depth: surface steps only; no shadows on phone (the Windows popup keeps the OS shadow).
+- Strokes: master arc 8 pt · app arc 4 pt (6 pt while dragging) · code ring 3 pt · radar orbits 1 pt. Arcs span 270°, start at 135°, round caps; the master and the dragged card show a white thumb (r 9 / 7).
+- Icons: SF Symbols / Material Symbols, outline, 2 pt: `speaker.wave.1`, `speaker.slash`, `chevron.*`, `iphone`. App icons are the real PNGs sent by the agent, shown in a 48 pt `raised` rounded tile; fallback = monogram.
+
+## Components
+
+### Radar (Computers)
+- Two concentric 1 pt `track` orbits (r 70 / 130) around a thin phone glyph. Paired PCs sit on the inner orbit, new and offline PCs on the outer one. Each point = 8 pt status dot + name (13/500); offline name in `muted`.
+- Searching: a single 1 pt `accent` ring expands from the centre and fades (2.4 s loop) — the screen's only loop; stops when the search ends or with Reduce Motion.
+- Below: one `surface` row per PC (dot + name; `›` or a yellow **Parear** button). "Adicionar por endereço" as a plain accent text button. IPs and "last seen" go to the row's detail, not the row.
+- Empty state: radar alone + "Procurando computadores na rede…" + same-network hint (the only caption allowed here).
+
+### Code ring (Pairing)
+- Title "Código do PC" + PC name. A 310 pt ring (3 pt `track`) with six 52 pt orbs at 60° steps from the top.
+- Typed digit: orb fills `accent` with `ink` digit (scale 0.85 → 1, 180 ms); progress arc advances 1/6 (240 ms ease-out). Current orb: 1.5 pt accent outline + caret. Centre: "4/6".
+- System numeric keyboard (`.numberPad` / `KeyboardType.NumberPad`), one-time-code paste accepted.
+- States: verifying (progress arc rotates slowly), wrong code (orbs turn `error` for 600 ms, empty, text "Código errado — veja o novo código no PC"), temporarily blocked (centre shows countdown), refused on PC, timed out. Each state has text; colour is never alone.
+
+### Master arc (Mixer)
+- Top bar: back · device name + `▾` (opens device sheet; default device first) · connection dot (`ok`/`warn`/`error`, with VoiceOver label).
+- 220 pt arc, value "64" + small `%`. Drag along the arc or vertically on it. One round mute button below; muted = `error` fill + slashed speaker, arc turns `edge`.
+
+### App card (Mixer)
+- 2-column grid, card 172 pt, `surface`, radius 24. Ring 96 pt around the app icon; name below (ellipsis); mute button top-right (36 pt visual, 44 pt hit).
+- Playing: one 8 pt `ok` dot before the name. Its opacity follows the live per-source peak level (protocol LEVELS, ~20 Hz, 0..255) smoothed to 55–100 %; nothing else uses level data. Silent: no dot. Muted: arc `edge`, icon at 45 %, name `muted`, red mute button — and no playing dot.
+- Gesture: drag along the ring or horizontally on the card; vertical drag scrolls the grid. While dragging, the stroke grows 4 → 6 pt, the thumb appears and the % replaces the icon; on release it returns after 600 ms. Remote changes animate the arc 240 ms; no echo jump while the finger is down.
+- Haptics: light tick every 10 %, stronger at 0 and 100 %.
+
+### Windows tray popup (C++ agent)
+- 340 px `surface` card, radius 8, Segoe UI Variable: "Archon" + 18 px countdown ring (accent arc); one line "Digite este código no celular para conectar."; code `482 913` at 36 px/600 in `paper`; "Recusar" button. Tray icon: thin accent ring (turns `ok` when a phone is connected). Plain Direct2D/GDI drawing; no effects.
+
+## Motion
+
+| Element | Motion | Duration / easing | Reduce Motion |
+| --- | --- | --- | --- |
+| Screen push | system navigation transition | platform default | platform default |
+| List rows / cards appear | fade + 8 pt rise, 40 ms stagger, once | 220 ms `cubic-bezier(0.2,0,0,1)` | fade only |
+| Code orb fill | scale 0.85 → 1 | 180 ms same curve | instant |
+| Progress / volume arc (remote change) | stroke end animates | 240 ms same curve | instant |
+| Arc while dragging | follows finger, no easing | — | — |
+| Radar pulse (searching only) | 1 ring expands + fades | 2.4 s loop | off; static ring |
+| Playing dot | opacity follows level | 50 ms smoothing | static 100 % |
+| Pairing success | ring closes, cross-fade to mixer | 300 ms | cross-fade |
+
+Never animated: text content, layout reflow, colour of text.
+
+## Native buildability and performance
+
+- SwiftUI: `Circle().trim(from:to:)` + `.stroke(style: StrokeStyle(lineCap: .round))`, rotated 135°; Compose: `Canvas { drawArc(...) }`. Orbs and rows are plain shapes. No blur, no shadows, no gradients, no shader.
+- Level data: subscribe only while the mixer is visible and the app is foreground; drop to 0 Hz in background / Reduce Motion / Low Power Mode. Only the dot's opacity redraws (one small layer per playing card) — negligible CPU/GPU.
+- The radar pulse is one layer animation and stops when searching ends.
+
+## Delivery test
+
+| Item | Result |
+| --- | --- |
+| Identity (palette, type, composition are Archon's, not a kit or reference) | pass — ring language unique to the app; system type |
+| Owner's literal asks (simple app, screens, cards, simple animations; keep code ring, radar, mixer) | pass — all three kept, elements cut, no hardware metaphor |
+| Round-1 feedback (not lifeless) | pass with risk — life comes from arcs, the playing dot driven by real level, the radar pulse and orb fills; owner must confirm this is not "simples demais" again |
+| AA contrast | pass — table above, all text ≥ 6.06:1 |
+| Rendered key frames | screenshot reviewed at 2000 px wide (Playwright, local server); not yet checked on a physical iPhone |
+
+## Risks
+
+- **Ring precision:** a 270° arc on a 96 pt ring gives ~200 pt of travel — less precise than a full-width slider. Mitigation: horizontal drag on the whole card, haptic ticks, VoiceOver/TalkBack adjustable action (±5 %). Validate in the first build.
+- **Gesture conflict** between card drag and grid scroll — direction lock after 8 pt; test with 10+ sources.
+- **Grid density:** 2 columns show ~4 apps above the fold on the 14 Plus; a PC with 12 sources scrolls. Acceptable; order = playing first, then by name.
+- **Track at 1.25:1** is decorative by design; if an audit treats the unlit ring as required UI, raise `track` to `#3A3A3A`.
+- **"Simples demais" relapse:** this is deliberately quieter than round 2; if the owner finds it flat, the next lever is motion (pairing → mixer transition), not more elements.
+- Real app icons bring their own colours into the grid; they stay in a neutral tile and are the only non-palette pixels.
+
+## Handoff
+
+- **design-system-architect:** replace the token table in `docs/design.md` with the one above (names unchanged where they exist: `ink`→`bg`, `surface`, `line`→`track`, `paper`, `muted`, `accent`, `ok`, `error`, `warn`; new: `raised`, `edge`). Add stroke widths, radii and the type scale.
+- **motion-director (optional):** only the pairing-success transition needs a spec; everything else is in the motion table.
+- **Protocol:** uses the LEVELS stream already available (~20 Hz, peak 0..255 per source and per device); controller must subscribe only while the mixer is visible.
+
+## Open questions
+
+1. Approve Halo v2 as the direction (then mark `APROVADA` with date and approver)?
+2. Is the master mute better under the arc (current) or as a tap on the value?
+3. Sort app cards by "playing first" or keep the PC's order?

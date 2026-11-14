@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- Halo ring: 270° track from 135°, pastel-yellow arc to 70 %, white thumb. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:strokeColor="#262626" android:strokeWidth="6" android:strokeLineCap="round"
+        android:pathData="M42.69,65.31 A16,16 0 1,1 65.31,65.31" />
+    <path android:strokeColor="#F6E7A1" android:strokeWidth="6" android:strokeLineCap="round"
+        android:pathData="M42.69,65.31 A16,16 0 1,1 69.71,48.42" />
+    <path android:fillColor="#FFFFFF" android:pathData="M69.71,48.42 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+</vector>

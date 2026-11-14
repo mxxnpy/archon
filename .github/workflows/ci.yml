@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows agent + core tests
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
+      - name: Build
+        run: cmake --build build
+      - name: Core tests
+        run: ctest --test-dir build --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archon-windows
+          path: |
+            build/agent-windows/Archon.exe
+            build/archon-cli.exe
+
+  linux:
+    name: Core tests (Linux, ASan + UBSan)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined"
+      - name: Build
+        run: cmake --build build -j
+      - name: Core tests
+        run: ctest --test-dir build --output-on-failure
+
+  android:
+    name: Android app
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Build APK and render screenshots
+        run: ./gradlew assembleDebug assembleRelease testDebugUnitTest --console=plain
+        env:
+          ARCHON_SHOTS: ${{ github.workspace }}/apps/android/app/build/screenshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archon-android
+          path: |
+            apps/android/app/build/outputs/apk/**/*.apk
+            apps/android/app/build/screenshots/*.png
+
+  ios:
+    name: iOS app (simulator build) + core tests on macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core tests (Apple clang)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build -j
+          ctest --test-dir build --output-on-failure
+      - name: Generate Xcode project
+        run: brew install xcodegen && xcodegen generate
+        working-directory: apps/ios
+      - name: Build for simulator
+        working-directory: apps/ios
+        run: >
+          xcodebuild -project Archon.xcodeproj -scheme Archon -configuration Debug
+          -sdk iphonesimulator -destination "generic/platform=iOS Simulator"
+          CODE_SIGNING_ALLOWED=NO build
+      - name: Build for device (unsigned)
+        working-directory: apps/ios
+        run: >
+          xcodebuild -project Archon.xcodeproj -scheme Archon -configuration Release
+          -sdk iphoneos -destination "generic/platform=iOS"
+          CODE_SIGNING_ALLOWED=NO build

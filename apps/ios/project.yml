@@ -1,0 +1,43 @@
+# XcodeGen spec — run `xcodegen generate` in apps/ios to create Archon.xcodeproj.
+name: Archon
+options:
+  bundleIdPrefix: dev.archon
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  developmentLanguage: pt-BR
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+    CLANG_CXX_LIBRARY: "libc++"
+    GCC_C_LANGUAGE_STANDARD: "c11"
+    DEVELOPMENT_TEAM: ""            # set your team to install on a device
+    CODE_SIGN_STYLE: Automatic
+targets:
+  Archon:
+    type: application
+    platform: iOS
+    sources:
+      - path: Archon
+      - path: ../../core/src
+        group: Core
+      - path: ../../core/third_party/monocypher/monocypher.c
+        group: Core
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.archon.app
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_FILE: Archon/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: Archon/Archon-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/../../core/include
+          - $(SRCROOT)/../../core/third_party/monocypher
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        DEAD_CODE_STRIPPING: YES
+    dependencies:
+      - sdk: Security.framework
+      - sdk: Network.framework
