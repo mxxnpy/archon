@@ -10,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "archon/bytes.hpp"
 #include "archon/net.hpp"
@@ -65,7 +66,16 @@ public:
     uint64_t rejected() const { return rejected_; }
 
 private:
+    struct Datagram {
+        std::string from;
+        Bytes data;
+    };
+    static constexpr size_t kMaxEarly = 32;  // ~0.6 s of audio
+
     void run();
+    // Authenticates and reorders one datagram; ready packets go to `out`. Caller holds mu_.
+    template <class Ready>
+    void accept_locked(const std::string& from, const uint8_t* d, size_t n, Ready& out);
 
     StreamListener& listener_;
     net::socket_t sock_ = net::kInvalidSocket;
@@ -78,6 +88,10 @@ private:
     std::string sender_;
     bool active_ = false;
     Reorder reorder_;
+    // UDP may beat the key (it travels over TCP): keep a few early datagrams
+    // and replay them once start() brings the key.
+    std::vector<Datagram> early_;
+    std::vector<Datagram> replay_;
     std::atomic<uint64_t> received_{0};
     std::atomic<uint64_t> rejected_{0};
 };

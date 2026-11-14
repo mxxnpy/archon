@@ -9,6 +9,7 @@
 #include "archon/trust_store.hpp"
 #include "mdns.hpp"
 #include "ui.hpp"
+#include "loopback_stream.hpp"
 #include "wasapi_backend.hpp"
 #include "win_util.hpp"
 
@@ -49,6 +50,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     // the computer name stays in the devices window for manual connection.
     const std::wstring shown_name = display_name();
     WasapiBackend backend;
+    LoopbackStreams streams;  // "listen on the phone"
     arc::ServerConfig scfg;
     scfg.agent_id = cfg.agent_id;
     scfg.agent_name = to_utf8(shown_name);
@@ -56,12 +58,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     scfg.initial_lockouts = cfg.lockouts;
     scfg.locked_until_unix = cfg.locked_until;
     auto server = std::make_unique<arc::Server>(scfg, backend, store, ui);
+    server->set_stream_service(&streams);
     if (!server->start(&err)) {
         // Port taken by something else: fall back to any free port. Phones
         // learn the port through mDNS, so discovery keeps working.
         log_line("cannot listen on port " + std::to_string(cfg.port) + ": " + err + "; using a free port");
         scfg.port = 0;
         server = std::make_unique<arc::Server>(scfg, backend, store, ui);
+        server->set_stream_service(&streams);
         if (!server->start(&err)) {
             log_line("server failed: " + err);
             ui.show_error(L"Archon não conseguiu iniciar / could not start:\n" + to_wide(err));
@@ -69,6 +73,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
             return 1;
         }
     }
+    streams.attach(server.get());
     log_line("listening on port " + std::to_string(server->port()));
 
     MdnsAdvertiser mdns;

@@ -17,6 +17,13 @@ if(ARCHON_BUILD_TESTS)
   add_subdirectory(core/tests)
 endif()
 
+# Shared by the desktop agents ("listen on the phone": Opus + sealed UDP).
+# Built on every desktop OS so CI (incl. Linux sanitizers) tests the stream path.
+option(ARCHON_BUILD_AGENT_COMMON "Build the desktop agents' shared streaming code" ON)
+if(ARCHON_BUILD_AGENT_COMMON AND NOT ANDROID AND NOT IOS)
+  add_subdirectory(agent-common)
+endif()
+
 if(ARCHON_BUILD_AGENT AND WIN32)
   add_subdirectory(agent-windows)
 endif()

@@ -257,6 +257,10 @@ Volumes are `u16` in **0..10000** (0.00 % – 100.00 %). Ids are opaque strings
   `endpoint_id` is the new device). A route to an unknown or input endpoint is
   ignored. The pin is per application and survives app restarts where the OS
   allows it (Windows keeps it per executable).
+  On Windows the pin takes effect when the app opens its audio stream again
+  (most players do on pause/play or track change; some only after a restart):
+  `route` is the setting, while the SOURCE's `endpoint_id` shows where the
+  audio really is, so a controller never claims a move that has not happened.
 * **Panic mute** is a toggle the controller can send without a mixer on screen
   (shortcut, widget, tile). The agent tracks which devices *it* muted, so
   PANIC_MUTE 0 never unmutes a device the user had muted before; a device the

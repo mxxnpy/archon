@@ -472,6 +472,34 @@ TEST(v13_stream_refuses_inputs_capacity_and_failed_capture) {
     CHECK(eventually([&] { return !state(1).second.active; }));
     rig.streams.fail = true;  // capture cannot start
     REQUIRE(cs[2]->stream_start(0));
-    CHECK(eventually([&] { return state(2).first == 2; }));
-    CHECK(!state(2).second.active && state(2).second.error == uint16_t(ErrorCode::Busy));
+    // The key goes out before capture starts, so the phone may see "active"
+    // first; what matters is that it ends inactive with the reason.
+    CHECK(eventually([&] {
+        const auto st = state(2);
+        return st.first >= 2 && !st.second.active && st.second.error == uint16_t(ErrorCode::Busy);
+    }));
+}
+
+TEST(v13_datagrams_arriving_before_the_key_are_kept) {
+    // The key travels over TCP; the first UDP datagrams can arrive before it.
+    Collect c;
+    StreamReceiver rx(c);
+    std::string err;
+    const uint16_t port = rx.open(&err);
+    REQUIRE(port != 0);
+    const Key32 key = random_array<32>();
+    net::socket_t tx = net::bind_udp(0, nullptr, &err);
+    REQUIRE(tx != net::kInvalidSocket);
+    for (uint64_t s = 0; s < 3; ++s) {
+        const Bytes p = pkt(uint8_t(s));
+        const Bytes d = seal_audio(key, s, 0, kStreamCodecOpus, p.data(), p.size());
+        net::send_udp(tx, "127.0.0.1", port, d.data(), d.size());
+    }
+    std::this_thread::sleep_for(100ms);  // they arrive with no key yet
+    CHECK(c.size() == 0);
+    rx.start(key, "127.0.0.1");
+    CHECK(eventually([&] { return c.size() == 3; }));
+    std::lock_guard<std::mutex> lk(c.mu);
+    for (size_t i = 0; i < c.got.size(); ++i) CHECK(c.got[i].seq == i && !c.got[i].lost);
+    net::close_socket(tx);
 }

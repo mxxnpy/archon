@@ -28,6 +28,9 @@ void StreamReceiver::start(const Key32& key, const std::string& sender_host) {
     if (pct != std::string::npos) sender_.resize(pct);
     active_ = true;
     reorder_.reset();
+    replay_.swap(early_);  // datagrams that arrived before the key: try them now
+    early_.clear();
+    waker_.wake();
 }
 
 void StreamReceiver::stop() {
@@ -35,6 +38,8 @@ void StreamReceiver::stop() {
     active_ = false;
     wipe(key_.data(), key_.size());
     reorder_.reset();
+    early_.clear();
+    replay_.clear();
 }
 
 void StreamReceiver::close() {
@@ -51,42 +56,63 @@ void StreamReceiver::close() {
     port_ = 0;
 }
 
+namespace {
+struct Out {
+    uint64_t seq;
+    Bytes packet;
+    bool lost;
+};
+}  // namespace
+
+template <class Ready>
+void StreamReceiver::accept_locked(const std::string& from, const uint8_t* d, size_t n, Ready& out) {
+    std::string src = from;
+    const size_t pct = src.find('%');
+    if (pct != std::string::npos) src.resize(pct);
+    uint64_t seq = 0;
+    uint32_t ts = 0;
+    uint8_t codec = 0;
+    Bytes packet;
+    // Only the PC we streamed from, and only with this stream's key.
+    if (src != sender_ || !open_audio(key_, d, n, seq, ts, codec, packet) || codec != kStreamCodecOpus) {
+        ++rejected_;
+        return;
+    }
+    ++received_;
+    reorder_.push(seq, std::move(packet), [&out](uint64_t s, const Bytes& p, bool lost) { out.push_back({s, p, lost}); });
+}
+
 void StreamReceiver::run() {
     std::vector<uint8_t> buf(2048);
     while (!stop_) {
         std::vector<net::PollItem> items{{waker_.fd(), true, false}, {sock_, true, false}};
         net::poll(items, 500);
         if (items[0].readable) waker_.drain();
+        std::vector<Out> ready;
+        {
+            // Datagrams kept from before the key arrived.
+            std::lock_guard<std::mutex> lk(mu_);
+            std::vector<Datagram> replay;
+            replay.swap(replay_);
+            if (active_)
+                for (const Datagram& g : replay) accept_locked(g.from, g.data.data(), g.data.size(), ready);
+        }
+        for (const Out& o : ready) listener_.on_audio(o.packet.data(), o.packet.size(), o.seq, o.lost);
         if (!items[1].readable) continue;
         for (;;) {  // drain everything that arrived
             std::string from;
             const long n = net::recv_udp(sock_, buf.data(), buf.size(), &from);
             if (n <= 0) break;
-            struct Out {
-                uint64_t seq;
-                Bytes packet;
-                bool lost;
-            };
-            std::vector<Out> ready;
+            ready.clear();
             {
                 std::lock_guard<std::mutex> lk(mu_);
-                if (!active_) continue;
-                std::string src = from;
-                const size_t pct = src.find('%');
-                if (pct != std::string::npos) src.resize(pct);
-                uint64_t seq = 0;
-                uint32_t ts = 0;
-                uint8_t codec = 0;
-                Bytes packet;
-                // Only the PC we streamed from, and only with this stream's key.
-                if (src != sender_ || !open_audio(key_, buf.data(), size_t(n), seq, ts, codec, packet) ||
-                    codec != kStreamCodecOpus) {
-                    ++rejected_;
+                if (!active_) {
+                    // No key yet: keep a few (the key is on its way over TCP).
+                    if (early_.size() >= kMaxEarly) early_.erase(early_.begin());
+                    early_.push_back(Datagram{from, Bytes(buf.data(), buf.data() + n)});
                     continue;
                 }
-                ++received_;
-                reorder_.push(seq, std::move(packet),
-                              [&ready](uint64_t s, const Bytes& p, bool lost) { ready.push_back({s, p, lost}); });
+                accept_locked(from, buf.data(), size_t(n), ready);
             }
             // Outside the lock: the app may call stop() from its callback.
             for (const Out& o : ready) listener_.on_audio(o.packet.data(), o.packet.size(), o.seq, o.lost);

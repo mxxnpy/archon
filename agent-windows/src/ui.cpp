@@ -22,6 +22,7 @@ constexpr UINT WM_APP_PAIR_REQUEST = WM_APP + 2;
 constexpr UINT WM_APP_PAIR_DONE = WM_APP + 3;
 constexpr UINT WM_APP_CONTROLLERS = WM_APP + 4;
 constexpr UINT WM_APP_PANIC = WM_APP + 5;
+constexpr UINT WM_APP_STREAMS = WM_APP + 6;
 constexpr int kPanicHotkey = 1;  // Ctrl+Alt+M
 constexpr UINT kTrayId = 1;
 
@@ -94,6 +95,7 @@ struct Text {
     const wchar_t* panic;        // menu item
     const wchar_t* panic_title;
     const wchar_t* panic_text;
+    const wchar_t* listening;  // appended to the status line
 };
 
 const Text& T() {
@@ -124,7 +126,8 @@ const Text& T() {
                          L"Desbloquear pareamento",
                          L"Silenciar tudo",
                          L"Tudo silenciado",
-                         L"Saídas e microfones foram silenciados. Use o mesmo atalho para voltar."};
+                         L"Saídas e microfones foram silenciados. Use o mesmo atalho para voltar.",
+                         L" · ouvindo no celular"};
     static const Text en{L"Archon",
                          L"Paired devices…",
                          L"Start with Windows",
@@ -152,7 +155,8 @@ const Text& T() {
                          L"Unlock pairing",
                          L"Mute everything",
                          L"Everything muted",
-                         L"Outputs and microphones are muted. Use the same shortcut to undo."};
+                         L"Outputs and microphones are muted. Use the same shortcut to undo.",
+                         L" · listening on a phone"};
     return is_portuguese_ui() ? pt : en;
 }
 
@@ -306,6 +310,8 @@ void AgentUi::on_pairing_lockout(int lockouts, int64_t locked_until_unix) { save
 
 void AgentUi::on_panic_changed(bool active) { PostMessageW(main_, WM_APP_PANIC, active ? 1 : 0, 0); }
 
+void AgentUi::on_streams_changed(size_t active) { PostMessageW(main_, WM_APP_STREAMS, WPARAM(active), 0); }
+
 // ---- tray ---------------------------------------------------------------------
 
 void AgentUi::add_tray() {
@@ -328,7 +334,9 @@ void AgentUi::update_tray_tip() {
     nid.uFlags = NIF_TIP | NIF_SHOWTIP | NIF_ICON;
     // Ring turns green while a phone is connected.
     nid.hIcon = connected_.empty() ? icon_small_ : icon_connected_;
-    wcscpy_s(nid.szTip, fmt(T().connected_fmt, int(connected_.size())).c_str());
+    std::wstring tip = fmt(T().connected_fmt, int(connected_.size()));
+    if (streams_) tip += T().listening;
+    wcsncpy_s(nid.szTip, tip.c_str(), _TRUNCATE);
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
@@ -345,7 +353,8 @@ void AgentUi::balloon(const std::wstring& title, const std::wstring& text) {
 
 void AgentUi::show_menu() {
     HMENU m = CreatePopupMenu();
-    const std::wstring header = fmt(T().connected_fmt, int(connected_.size()));
+    std::wstring header = fmt(T().connected_fmt, int(connected_.size()));
+    if (streams_) header += T().listening;
     AppendMenuW(m, MF_STRING | MF_DISABLED, 0, header.c_str());
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_DEVICES, T().devices);
@@ -412,6 +421,10 @@ LRESULT AgentUi::handle_main(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case WM_HOTKEY:
             if (w == kPanicHotkey && server_) server_->panic_toggle();
+            return 0;
+        case WM_APP_STREAMS:
+            streams_ = size_t(w);
+            update_tray_tip();
             return 0;
         case WM_APP_PANIC:
             panic_ = w != 0;

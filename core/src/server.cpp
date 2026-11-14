@@ -138,20 +138,22 @@ struct Server::Impl {
         if (c.streaming) end_stream(c, ErrorCode::None, false);  // restart (other output / port)
         if (stream_count() >= kMaxStreams) return send_stream_state(c, false, nullptr, ErrorCode::Busy);
         Key32 key = random_array<32>();
+        // The key goes out first so the phone can open the first datagrams
+        // (UDP can still win the race; the receiver keeps a few early ones).
+        send_stream_state(c, true, &key, ErrorCode::None);
         std::string err;
         if (!s.stream_service_->start(c.id, ep, c.address, req.udp_port, key, &err)) {
             wipe(key.data(), key.size());
             log("stream could not start: " + err);
             return send_stream_state(c, false, nullptr, ErrorCode::Busy);
         }
+        wipe(key.data(), key.size());
         c.streaming = true;
         c.stream_endpoint = ep;
         if ((req.flags & kStreamFlagMutePc) && !it->second.muted) {
             request_mute(ep, true);
             c.stream_muted_pc = true;
         }
-        send_stream_state(c, true, &key, ErrorCode::None);
-        wipe(key.data(), key.size());
         log("stream started for " + c.name);
         stream_changed();
     }

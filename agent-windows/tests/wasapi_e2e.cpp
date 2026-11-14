@@ -11,7 +11,12 @@
 #include <audioclient.h>
 #include <wrl/client.h>
 
+#include <opus.h>
+
+#include <atomic>
 #include <chrono>
+#include <cmath>
+#include <vector>
 #include <cstdio>
 #include <map>
 #include <mutex>
@@ -20,6 +25,7 @@
 #include "archon/client.hpp"
 #include "archon/crypto.hpp"
 #include "archon/server.hpp"
+#include "../src/loopback_stream.hpp"
 #include "../src/wasapi_backend.hpp"
 
 using namespace arc;
@@ -37,6 +43,11 @@ int meter_frames = 0;
 ClientStatus status = ClientStatus::Idle;
 int synced = 0;
 AgentInfo agent_info;
+StreamState stream_state;
+int stream_states = 0;
+std::vector<float> heard;  // decoded left channel from the stream
+int heard_frames = 0;
+OpusDecoder* decoder = nullptr;
 int agent_infos = 0;
 int failures = 0;
 
@@ -72,6 +83,15 @@ struct L : ClientListener {
         std::lock_guard<std::mutex> lk(mu);
         status = s;
     }
+    void on_audio(const uint8_t* p, size_t n, uint64_t, bool lost) override {
+        std::lock_guard<std::mutex> lk(mu);
+        if (!decoder) return;
+        std::vector<float> pcm(960 * 2);
+        const int got = opus_decode_float(decoder, lost ? nullptr : p, lost ? 0 : opus_int32(n), pcm.data(), 960, 0);
+        if (got <= 0) return;
+        ++heard_frames;
+        for (int i = 0; i < got; ++i) heard.push_back(pcm[size_t(i) * 2]);
+    }
     void on_event(const ControllerEvent& e) override {
         std::lock_guard<std::mutex> lk(mu);
         using K = ControllerEvent::Kind;
@@ -80,6 +100,10 @@ struct L : ClientListener {
         if (e.kind == K::Source) srcs[e.source.id] = e.source;
         if (e.kind == K::SourceRemoved) srcs.erase(e.id);
         if (e.kind == K::StateSynced) ++synced;
+        if (e.kind == K::StreamState) {
+            stream_state = e.stream;
+            ++stream_states;
+        }
         if (e.kind == K::AgentInfo) {
             agent_info = e.agent;
             ++agent_infos;
@@ -120,7 +144,10 @@ int main() {
     cfg.agent_name = "E2E";
     cfg.loopback_only = true;
     cfg.port = 0;
+    agent::LoopbackStreams streams;  // as in main.cpp: "listen on the phone"
     Server server(cfg, backend, store, obs);
+    server.set_stream_service(&streams);
+    streams.attach(&server);
     std::string err;
     if (!server.start(&err)) {
         std::printf("FAIL server start: %s\n", err.c_str());
@@ -233,6 +260,90 @@ int main() {
         SUCCEEDED(defdev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &ac)) && SUCCEEDED(ac->GetMixFormat(&fmt)) &&
         SUCCEEDED(ac->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 10000000, 0, fmt, nullptr)) && SUCCEEDED(ac->Start());
     if (fmt) CoTaskMemFree(fmt);
+
+    // ---- 1.3: listen on the phone (loopback -> Opus -> sealed UDP -> decode) ----
+    {
+        int oe = 0;
+        std::lock_guard<std::mutex> lk(mu);
+        decoder = opus_decoder_create(48000, 2, &oe);
+    }
+    check((agent_info.features & kFeatureStream) != 0, "agent announces listening on the phone");
+    std::string def_out;
+    bool def_muted = false;
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        for (auto& [id, e] : eps)
+            if (e.is_default && !e.input) {
+                def_out = id;
+                def_muted = e.muted;
+            }
+    }
+    // A quiet 440 Hz tone on the default output (inaudible: the stream mutes the PC).
+    Microsoft::WRL::ComPtr<IAudioClient> tone;
+    Microsoft::WRL::ComPtr<IAudioRenderClient> render;
+    WAVEFORMATEX* tf = nullptr;
+    std::atomic<bool> play{true};
+    std::thread player;
+    if (defdev && SUCCEEDED(defdev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &tone)) &&
+        SUCCEEDED(tone->GetMixFormat(&tf)) &&
+        SUCCEEDED(tone->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 2000000, 0, tf, nullptr)) &&
+        SUCCEEDED(tone->GetService(IID_PPV_ARGS(&render)))) {
+        const int ch = tf->nChannels, rate = int(tf->nSamplesPerSec);
+        UINT32 cap = 0;
+        tone->GetBufferSize(&cap);
+        tone->Start();
+        std::printf("     test tone playing: %d ch @ %d Hz, format tag 0x%x\n", ch, rate, unsigned(tf->wFormatTag));
+        player = std::thread([&, ch, rate, cap] {
+            double ph = 0;
+            while (play) {
+                UINT32 pad = 0;
+                tone->GetCurrentPadding(&pad);
+                BYTE* buf = nullptr;
+                if (cap > pad && SUCCEEDED(render->GetBuffer(cap - pad, &buf))) {
+                    float* f = reinterpret_cast<float*>(buf);  // shared-mode mix format is float32
+                    for (UINT32 i = 0; i < cap - pad; ++i) {
+                        const float v = float(0.2 * std::sin(ph));
+                        ph += 2 * 3.14159265358979 * 440.0 / rate;
+                        for (int c = 0; c < ch; ++c) f[i * ch + c] = v;
+                    }
+                    render->ReleaseBuffer(cap - pad, 0);
+                }
+                Sleep(5);
+            }
+        });
+    }
+    if (!def_out.empty() && client.stream_start(kStreamFlagMutePc)) {
+        check(wait([] { return stream_states > 0 && stream_state.active; }), "stream started (STREAM_STATE active)");
+        check(wait([&] { return eps[def_out].muted; }), "the PC's output is muted while streaming");
+        std::this_thread::sleep_for(1500ms);
+        client.stream_stop();
+        check(wait([] { return !stream_state.active; }), "stream stopped (STREAM_STATE inactive)");
+        check(wait([&] { return eps[def_out].muted == def_muted; }), "the PC's output mute is restored");
+        std::lock_guard<std::mutex> lk(mu);
+        double sum = 0;
+        int crossings = 0;
+        size_t n = 0;
+        // Measure the second half (the tone is steady by then).
+        const size_t from = heard.size() / 2;
+        for (size_t i = from; i < heard.size(); ++i, ++n) {
+            sum += double(heard[i]) * heard[i];
+            if (i > from && (heard[i - 1] < 0) != (heard[i] < 0)) ++crossings;
+        }
+        const double rms = n ? std::sqrt(sum / double(n)) : 0;
+        const double hz = n ? crossings / 2.0 / (double(n) / 48000.0) : 0;
+        std::printf("     received %d frames, decoded rms %.3f, pitch ~%.0f Hz\n", heard_frames, rms, hz);
+        check(heard_frames >= 50, "audio frames reached the phone side");
+        check(rms > 0.05 && hz > 400 && hz < 480, "the PC's tone is heard on the phone side (loopback while muted)");
+    } else {
+        check(false, "stream_start accepted");
+    }
+    play = false;
+    if (player.joinable()) player.join();
+    if (tone) tone->Stop();
+    if (tf) CoTaskMemFree(tf);
+
+    // Per-app routing last: Windows keeps a pin made before a stream opens for
+    // the rest of this process, which would send the tone above elsewhere.
     const uint32_t self = GetCurrentProcessId();
     auto my_source = [&]() -> const SourceInfo* {
         for (auto& [id, s] : srcs)
