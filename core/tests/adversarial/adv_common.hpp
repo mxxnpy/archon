@@ -226,6 +226,7 @@ public:
     std::map<std::string, EndpointInfo> endpoints;
     std::map<std::string, SourceInfo> sources;
     int synced = 0;
+    int resets = 0;  // dumps started; a dump is in progress while resets > synced
     int readies = 0;
     std::map<uint16_t, uint8_t> levels;
     std::atomic<int> events{0};
@@ -253,7 +254,7 @@ public:
         switch (ev.kind) {
             case K::Paired: record = ev.pairing; break;
             case K::Ready: ++readies; break;
-            case K::StateReset: endpoints.clear(); sources.clear(); break;
+            case K::StateReset: endpoints.clear(); sources.clear(); ++resets; break;
             case K::StateSynced: ++synced; break;
             case K::Endpoint: endpoints[ev.endpoint.id] = ev.endpoint; break;
             case K::EndpointRemoved: endpoints.erase(ev.id); break;

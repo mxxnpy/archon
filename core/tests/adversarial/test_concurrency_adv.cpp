@@ -130,10 +130,20 @@ TEST(adv_sink_hammer_with_controller_churn_converges) {
     for (auto& w : workers) w.join();
     // Sentinel: once it arrives, every earlier post has been processed and sent.
     rig.server->endpoint_upsert(EndpointInfo{"ZZ-sentinel", "s", 1, false, false});
-    REQUIRE(wait_for(watcher_l.mu, [&] { return watcher_l.endpoints.count("ZZ-sentinel") == 1; }, 8000));
+    // On a slow machine the agent may drop the watcher for not reading (output
+    // buffer limit) during the storm; it then reconnects and receives a fresh
+    // dump. Compare only once the sentinel is there and no dump is half-applied
+    // (CI on Linux + ASan once compared mid-dump: endpoints complete, sources not).
+    REQUIRE(wait_for(watcher_l.mu, [&] {
+        return watcher_l.endpoints.count("ZZ-sentinel") == 1 && watcher_l.resets == watcher_l.synced;
+    }, 8000));
     std::string why;
     CHECK(same_model(truth, watcher_l, &why));
     if (!why.empty()) std::printf("  incremental mismatch: %s\n", why.c_str());
+    {
+        std::lock_guard<std::mutex> lk(watcher_l.mu);
+        std::printf("  watcher links: %d, dumps: %d\n", watcher_l.readies, watcher_l.resets);
+    }
     // A fresh controller's dump agrees too.
     Listener fresh_l;
     Client fresh(churn_id, "fresh", fresh_l, fast_timing());
