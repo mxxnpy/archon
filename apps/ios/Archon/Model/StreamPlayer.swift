@@ -78,7 +78,15 @@ final class StreamPlayer {
             queued += 1
             node.scheduleBuffer(out) { [weak self] in
                 guard let self else { return }
-                self.queue.async { self.queued = max(0, self.queued - 1) }
+                self.queue.async {
+                    self.queued = max(0, self.queued - 1)
+                    // Ran dry (Wi-Fi hiccup): pause and buffer up again, so
+                    // playback resumes smoothly instead of stuttering.
+                    if self.queued == 0 && self.playing && self.running {
+                        self.node.pause()
+                        self.playing = false
+                    }
+                }
             }
             if !playing && queued >= Self.startFrames {
                 node.play()

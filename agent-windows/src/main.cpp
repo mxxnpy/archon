@@ -86,6 +86,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     log_line("agent stopping");
     mdns.stop();
     server->stop();
+    streams.attach(nullptr);  // a capture thread must not report to a server being destroyed
     ui.destroy();
     CoUninitialize();
     ReleaseMutex(mutex);

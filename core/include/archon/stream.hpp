@@ -29,7 +29,7 @@ public:
 class Reorder {
 public:
     static constexpr size_t kWindow = 3;      // frames held to fix reordering (3 x 20 ms)
-    static constexpr uint64_t kResync = 100;  // a jump this big restarts the sequence
+    static constexpr uint64_t kResync = 100;  // a jump this big ahead restarts the sequence
 
     // Feeds one authenticated packet; calls out(seq, packet, lost) in order.
     template <class Out>
@@ -56,7 +56,8 @@ public:
     uint16_t open(std::string* err);
     // Starts accepting datagrams from `sender_host` (numeric) sealed with `key`.
     void start(const Key32& key, const std::string& sender_host);
-    // Stops accepting (keeps the port for the next start).
+    // Stops accepting and drops whatever arrives until the next open() (the
+    // port stays bound; the owner destroys the receiver to release it).
     void stop();
     void close();
     uint16_t port() const { return port_; }
@@ -87,6 +88,7 @@ private:
     Key32 key_{};
     std::string sender_;
     bool active_ = false;
+    bool armed_ = false;  // a stream was asked for: keep early datagrams until the key comes
     Reorder reorder_;
     // UDP may beat the key (it travels over TCP): keep a few early datagrams
     // and replay them once start() brings the key.
@@ -100,13 +102,15 @@ private:
 
 template <class Out>
 void Reorder::push(uint64_t seq, Bytes packet, Out&& out) {
-    if (!started_ || seq >= next_ + kResync || seq + kResync <= next_) {
-        // First packet, or the sender restarted far away: start over here.
+    if (!started_ || seq >= next_ + kResync) {
+        // First packet, or a big gap ahead (the link dropped for a while):
+        // continue from here. Never backwards: each key belongs to one stream
+        // whose seq only goes up, so an old seq is a replay and is dropped.
         started_ = true;
         held_.clear();
         next_ = seq;
     }
-    if (seq < next_ || held_.count(seq)) return;  // late or duplicate
+    if (seq < next_ || held_.count(seq)) return;  // late, duplicate or replayed
     held_.emplace(seq, std::move(packet));
     for (;;) {
         auto it = held_.find(next_);

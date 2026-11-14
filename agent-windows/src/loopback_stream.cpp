@@ -37,7 +37,8 @@ bool LoopbackStreams::start(uint64_t id, const std::string& endpoint_id, const s
     stop(id);  // a restart replaces the previous stream of this phone
     auto st = std::make_unique<Stream>();
     Stream* raw = st.get();
-    raw->thread = std::thread(&LoopbackStreams::run, this, id, raw, to_wide(endpoint_id), dest_host, dest_port, key);
+    raw->key = key;  // not a thread argument: std::thread would keep an unwipeable copy
+    raw->thread = std::thread(&LoopbackStreams::run, this, id, raw, to_wide(endpoint_id), dest_host, dest_port);
     std::lock_guard<std::mutex> lk(mu_);
     streams_[id] = std::move(st);
     return true;  // capture errors are reported later through Server::stream_failed
@@ -56,10 +57,8 @@ void LoopbackStreams::stop(uint64_t id) {
     if (st->thread.joinable()) st->thread.join();
 }
 
-void LoopbackStreams::run(uint64_t id, Stream* st, std::wstring endpoint, std::string host, uint16_t port,
-                          arc::Key32 key) {
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    bool failed = false;
+void LoopbackStreams::capture(Stream* st, const std::wstring& endpoint, const std::string& host, uint16_t port,
+                              arc::Key32& key, bool& failed) {
     {
         OpusStreamer enc(host, port, key);
         arc::wipe(key.data(), key.size());
@@ -121,6 +120,9 @@ void LoopbackStreams::run(uint64_t id, Stream* st, std::wstring endpoint, std::s
             } else if (now - fed >= std::chrono::milliseconds(20)) {
                 // Nothing is playing (Windows sends no loopback data then): send
                 // silence so the phone's playback clock keeps running smoothly.
+                // After a long stall (sleep, a suspended VM) only the last
+                // 200 ms count: no burst of old silence, no huge allocation.
+                if (now - fed > std::chrono::milliseconds(200)) fed = now - std::chrono::milliseconds(200);
                 const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - fed).count();
                 const size_t frames = size_t(ms / 20) * size_t(OpusStreamer::kFrame);
                 enc.push_silence(frames);
@@ -129,8 +131,21 @@ void LoopbackStreams::run(uint64_t id, Stream* st, std::wstring endpoint, std::s
         }
         if (client) client->Stop();
     }
+}
+
+void LoopbackStreams::run(uint64_t id, Stream* st, std::wstring endpoint, std::string host, uint16_t port) {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool failed = false;
+    try {
+        capture(st, endpoint, host, port, st->key, failed);
+    } catch (const std::exception& e) {  // e.g. bad_alloc: end this stream, not the agent
+        log_line(std::string("listen on the phone: capture stopped: ") + e.what());
+        failed = true;
+    }
+    arc::wipe(st->key.data(), st->key.size());
     CoUninitialize();
-    if (failed && !st->stop && server_) server_->stream_failed(id, arc::ErrorCode::ConnectionLost);
+    arc::Server* server = server_.load();
+    if (failed && !st->stop && server) server->stream_failed(id, arc::ErrorCode::ConnectionLost);
 }
 
 }  // namespace agent

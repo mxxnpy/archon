@@ -301,13 +301,18 @@ Feature bit 3 in AGENT_INFO announces it.
   little-endian in the first 8 bytes, then the ASCII `ARC1S` and zeros.
 * The **stream key is fresh random** for every STREAM_START and travels only
   inside the encrypted channel (STREAM_STATE), so nobody else on the network can
-  listen or inject audio. Datagrams that fail authentication, repeat a `seq`, or
-  arrive more than 1 s late are dropped.
+  listen or inject audio. Datagrams that fail authentication, come from another
+  address, or carry a `seq` the controller has already played or passed are
+  dropped: under one key `seq` only goes forward, so a recorded datagram
+  replayed later is never played again. A jump of 100 frames or more *ahead*
+  (the network dropped for a while) restarts playback from there.
 * One stream per controller and at most 2 streams per agent (Busy beyond). The
   stream stops on STREAM_STOP, when the controller's link closes, or when the
   captured output disappears; the agent then sends STREAM_STATE with active = 0
   (and `error` when it stopped for a reason). "Mute the PC while streaming"
-  is undone when the stream ends.
+  is undone when the last stream that asked for it ends — not while a panic
+  mute is on (the output then stays muted and comes back when the panic ends),
+  and never for an output the user had muted by hand.
 * Controllers keep a small jitter buffer (target ≈ 60 ms) and conceal gaps.
 
 ### Level meters (added in 1.1, backward compatible)

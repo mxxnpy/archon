@@ -20,6 +20,7 @@ public:
     LoopbackStreams() = default;
     ~LoopbackStreams() override;
     // The server to tell when a stream ends on its own (output gone).
+    // nullptr before the server goes away.
     void attach(arc::Server* server) { server_ = server; }
 
     bool start(uint64_t id, const std::string& endpoint_id, const std::string& dest_host, uint16_t dest_port,
@@ -30,10 +31,13 @@ private:
     struct Stream {
         std::thread thread;
         std::atomic<bool> stop{false};
+        arc::Key32 key{};  // read once by the capture thread, then wiped
     };
-    void run(uint64_t id, Stream* st, std::wstring endpoint, std::string host, uint16_t port, arc::Key32 key);
+    void run(uint64_t id, Stream* st, std::wstring endpoint, std::string host, uint16_t port);
+    void capture(Stream* st, const std::wstring& endpoint, const std::string& host, uint16_t port,
+                 arc::Key32& key, bool& failed);
 
-    arc::Server* server_ = nullptr;
+    std::atomic<arc::Server*> server_{nullptr};
     std::mutex mu_;
     std::map<uint64_t, std::unique_ptr<Stream>> streams_;
 };

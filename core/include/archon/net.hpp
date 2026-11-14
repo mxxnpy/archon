@@ -44,6 +44,10 @@ bool send_udp(socket_t s, const std::string& host, uint16_t port, const uint8_t*
 long recv_udp(socket_t s, uint8_t* p, size_t n, std::string* from);
 // "::ffff:192.168.0.5" -> "192.168.0.5"; anything else unchanged.
 std::string unmap_ipv4(const std::string& host);
+// Numeric address in one canonical text form (scope dropped, IPv4-mapped
+// unmapped, IPv6 compressed and lower case) so two spellings compare equal.
+// Anything that is not a numeric address is returned unchanged.
+std::string canonical_ip(const std::string& host);
 
 struct PollItem {
     socket_t fd;

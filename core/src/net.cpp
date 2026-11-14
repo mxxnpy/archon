@@ -151,6 +151,18 @@ std::string unmap_ipv4(const std::string& host) {
     return host;
 }
 
+std::string canonical_ip(const std::string& host) {
+    std::string h = host;
+    const size_t pct = h.find('%');
+    if (pct != std::string::npos) h.resize(pct);
+    char buf[INET6_ADDRSTRLEN] = {0};
+    in_addr a4{};
+    in6_addr a6{};
+    if (inet_pton(AF_INET, h.c_str(), &a4) == 1 && inet_ntop(AF_INET, &a4, buf, sizeof buf)) return buf;
+    if (inet_pton(AF_INET6, h.c_str(), &a6) == 1 && inet_ntop(AF_INET6, &a6, buf, sizeof buf)) return unmap_ipv4(buf);
+    return unmap_ipv4(h);
+}
+
 socket_t bind_udp(uint16_t port, uint16_t* bound_port, std::string* err) {
     init();
     socket_t s = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);

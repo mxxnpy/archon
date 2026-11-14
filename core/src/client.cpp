@@ -293,11 +293,16 @@ bool Client::run_connection(bool& ever_ready) {
                 case ControllerEvent::Kind::StreamState: {
                     // The key arrived inside the encrypted channel: accept audio
                     // only from this PC's address, sealed with it.
-                    std::lock_guard<std::mutex> lk(receiver_mu_);
-                    if (receiver_) {
-                        if (ev.stream.active) receiver_->start(ev.stream.key, host);
-                        else receiver_->stop();
+                    std::unique_ptr<StreamReceiver> ended;
+                    {
+                        std::lock_guard<std::mutex> lk(receiver_mu_);
+                        if (receiver_) {
+                            if (ev.stream.active) receiver_->start(ev.stream.key, host);
+                            else ended = std::move(receiver_);  // stream over: release the UDP port
+                        }
                     }
+                    ended.reset();  // joins its reader outside receiver_mu_ (its callback may call stream_stop)
+                    wipe(ev.stream.key.data(), ev.stream.key.size());  // the app never sees the key
                     break;
                 }
                 default:
@@ -420,9 +425,13 @@ bool Client::run_connection(bool& ever_ready) {
     live_ = false;
     net::close_socket(fd);
     {
-        // The agent stops streaming when the link closes; a new stream must be asked for.
-        std::lock_guard<std::mutex> lk(receiver_mu_);
-        if (receiver_) receiver_->stop();
+        // The agent stops streaming when the link closes; a new stream must be
+        // asked for (with a new port). Released outside the lock, as above.
+        std::unique_ptr<StreamReceiver> ended;
+        {
+            std::lock_guard<std::mutex> lk(receiver_mu_);
+            ended = std::move(receiver_);
+        }
     }
     if (stop_) return false;
     {

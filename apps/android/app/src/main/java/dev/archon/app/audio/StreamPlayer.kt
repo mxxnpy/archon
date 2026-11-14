@@ -20,33 +20,41 @@ import java.util.concurrent.TimeUnit
 class StreamPlayer {
     private class Packet(val data: ByteArray?, val lost: Boolean)
 
-    private val queue = LinkedBlockingQueue<Packet>()
-    @Volatile private var running = false
+    /** One playback run: its own queue and flag, so a worker still finishing
+     *  after stop() never shares packets with the next one. */
+    private class Session {
+        val queue = LinkedBlockingQueue<Packet>()
+        @Volatile var running = true
+    }
+
+    @Volatile private var session: Session? = null
     private var worker: Thread? = null
 
     fun start() {
-        if (running) return
-        queue.clear()
-        running = true
-        worker = Thread({ run() }, "archon-audio").apply { start() }
+        if (session != null) return
+        val s = Session()
+        session = s
+        worker = Thread({ run(s) }, "archon-audio").apply { start() }
     }
 
     fun stop() {
-        running = false
+        val s = session ?: return
+        session = null
+        s.running = false
         worker?.interrupt()
         worker?.join(1000)
         worker = null
-        queue.clear()
+        s.queue.clear()
     }
 
     /** Core network thread: one packet in order, or a lost frame. */
     fun feed(packet: ByteArray?, lost: Boolean) {
-        if (!running) return
-        if (queue.size > MAX_QUEUED) return  // > 200 ms behind: drop to catch up
-        queue.offer(Packet(packet, lost))
+        val s = session ?: return
+        if (s.queue.size > MAX_QUEUED) return  // > 200 ms behind: drop to catch up
+        s.queue.offer(Packet(packet, lost))
     }
 
-    private fun run() {
+    private fun run(s: Session) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         val codec = runCatching { MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS) }.getOrNull() ?: return
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, RATE, 2).apply {
@@ -55,19 +63,24 @@ class StreamPlayer {
             setByteBuffer("csd-2", leLong(SEEK_PREROLL_NS))
         }
         val minBuf = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build(),
-            )
-            .setAudioFormat(
-                AudioFormat.Builder().setSampleRate(RATE).setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build(),
-            )
-            .setBufferSizeInBytes(maxOf(minBuf, FRAME_BYTES * 4))
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-            .build()
+        val track = runCatching {
+            AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build(),
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder().setSampleRate(RATE).setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build(),
+                )
+                .setBufferSizeInBytes(maxOf(minBuf, FRAME_BYTES * 4))
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                .build()
+        }.getOrElse {
+            codec.release()  // no audio output available: end quietly instead of crashing the app
+            return
+        }
         val silence = ByteArray(FRAME_BYTES)
         val info = MediaCodec.BufferInfo()
         var pts = 0L
@@ -75,8 +88,15 @@ class StreamPlayer {
         try {
             codec.configure(format, null, null, 0)
             codec.start()
-            while (running) {
-                val p = queue.poll(100, TimeUnit.MILLISECONDS) ?: continue
+            while (s.running) {
+                val p = s.queue.poll(100, TimeUnit.MILLISECONDS)
+                if (p == null) {
+                    // Nothing for 100 ms (Wi-Fi hiccup): pause and buffer up
+                    // again, so playback resumes smoothly instead of stuttering.
+                    if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.pause()
+                    buffered = 0
+                    continue
+                }
                 if (p.lost || p.data == null || p.data.isEmpty()) {
                     track.write(silence, 0, silence.size)  // a gap keeps its 20 ms
                 } else {

@@ -12,6 +12,10 @@ StreamReceiver::StreamReceiver(StreamListener& listener) : listener_(listener) {
 StreamReceiver::~StreamReceiver() { close(); }
 
 uint16_t StreamReceiver::open(std::string* err) {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        armed_ = true;
+    }
     if (sock_ != net::kInvalidSocket) return port_;
     sock_ = net::bind_udp(0, &port_, err);
     if (sock_ == net::kInvalidSocket) return 0;
@@ -23,9 +27,7 @@ uint16_t StreamReceiver::open(std::string* err) {
 void StreamReceiver::start(const Key32& key, const std::string& sender_host) {
     std::lock_guard<std::mutex> lk(mu_);
     key_ = key;
-    sender_ = net::unmap_ipv4(sender_host);
-    const size_t pct = sender_.find('%');
-    if (pct != std::string::npos) sender_.resize(pct);
+    sender_ = net::canonical_ip(sender_host);
     active_ = true;
     reorder_.reset();
     replay_.swap(early_);  // datagrams that arrived before the key: try them now
@@ -36,6 +38,7 @@ void StreamReceiver::start(const Key32& key, const std::string& sender_host) {
 void StreamReceiver::stop() {
     std::lock_guard<std::mutex> lk(mu_);
     active_ = false;
+    armed_ = false;
     wipe(key_.data(), key_.size());
     reorder_.reset();
     early_.clear();
@@ -66,9 +69,7 @@ struct Out {
 
 template <class Ready>
 void StreamReceiver::accept_locked(const std::string& from, const uint8_t* d, size_t n, Ready& out) {
-    std::string src = from;
-    const size_t pct = src.find('%');
-    if (pct != std::string::npos) src.resize(pct);
+    const std::string src = net::canonical_ip(from);
     uint64_t seq = 0;
     uint32_t ts = 0;
     uint8_t codec = 0;
@@ -107,6 +108,10 @@ void StreamReceiver::run() {
             {
                 std::lock_guard<std::mutex> lk(mu_);
                 if (!active_) {
+                    if (!armed_) {  // nobody is listening: nothing is kept
+                        ++rejected_;
+                        continue;
+                    }
                     // No key yet: keep a few (the key is on its way over TCP).
                     if (early_.size() >= kMaxEarly) early_.erase(early_.begin());
                     early_.push_back(Datagram{from, Bytes(buf.data(), buf.data() + n)});

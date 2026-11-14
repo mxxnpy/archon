@@ -43,8 +43,8 @@ struct Server::Conn {
     bool half_closed = false;    // FIN sent after the final error; waiting for the peer
     bool listed = false;         // currently reported to the observer as connected
     bool streaming = false;      // 1.3: listening on the phone
+    uint64_t stream_id = 0;      // unique per stream: a late failure of an old one cannot end a new one
     std::string stream_endpoint;
-    bool stream_muted_pc = false;  // we muted stream_endpoint for this stream
 
     Id16 controller_id{};
     std::string name;  // cleaned; bound into the handshake transcript
@@ -84,6 +84,7 @@ struct Server::Impl {
     bool metering = false;
 
     static constexpr size_t kMaxStreams = 2;
+    uint64_t next_stream_id = 1;
 
     size_t stream_count() const {
         size_t n = 0;
@@ -107,7 +108,10 @@ struct Server::Impl {
             st.key = *key;
         }
         st.error = uint16_t(err);
-        queue_app(c, encode_stream_state(st));
+        Bytes msg = encode_stream_state(st);
+        wipe(st.key.data(), st.key.size());
+        queue_app(c, msg);  // sealed copy only; the plaintext holding the key is wiped
+        wipe(msg.data(), msg.size());
     }
 
     // Ends c's stream: stop capture, undo "mute the PC", tell the phone (if it is
@@ -115,12 +119,8 @@ struct Server::Impl {
     void end_stream(Conn& c, ErrorCode reason, bool notify) {
         if (!c.streaming) return;
         c.streaming = false;
-        if (s.stream_service_) s.stream_service_->stop(c.id);
-        if (c.stream_muted_pc) {
-            auto it = endpoints.find(c.stream_endpoint);
-            if (it != endpoints.end() && it->second.muted) request_mute(c.stream_endpoint, false);
-            c.stream_muted_pc = false;
-        }
+        if (s.stream_service_) s.stream_service_->stop(c.stream_id);
+        release_stream_mute(c);
         if (notify) send_stream_state(c, false, nullptr, reason);
         log("stream stopped for " + c.name);
         stream_changed();
@@ -142,18 +142,17 @@ struct Server::Impl {
         // (UDP can still win the race; the receiver keeps a few early ones).
         send_stream_state(c, true, &key, ErrorCode::None);
         std::string err;
-        if (!s.stream_service_->start(c.id, ep, c.address, req.udp_port, key, &err)) {
+        const uint64_t sid = next_stream_id++;
+        if (!s.stream_service_->start(sid, ep, c.address, req.udp_port, key, &err)) {
             wipe(key.data(), key.size());
             log("stream could not start: " + err);
             return send_stream_state(c, false, nullptr, ErrorCode::Busy);
         }
         wipe(key.data(), key.size());
         c.streaming = true;
+        c.stream_id = sid;
         c.stream_endpoint = ep;
-        if ((req.flags & kStreamFlagMutePc) && !it->second.muted) {
-            request_mute(ep, true);
-            c.stream_muted_pc = true;
-        }
+        if (req.flags & kStreamFlagMutePc) hold_stream_mute(c, ep);
         log("stream started for " + c.name);
         stream_changed();
     }
@@ -161,6 +160,38 @@ struct Server::Impl {
     // Panic mute: devices this agent muted, so turning it off restores only those.
     bool panic = false;
     std::set<std::string> panic_muted;
+
+    // "Mute the PC while I listen": endpoint -> the streams (conn ids) holding
+    // that mute. The output comes back only when the last of them ends, and
+    // not during a panic (it then belongs to the panic). A device the user
+    // muted by hand is never claimed, so a stream never unmutes it.
+    std::map<std::string, std::set<uint64_t>> stream_mutes;
+
+    void hold_stream_mute(Conn& c, const std::string& ep) {
+        auto it = endpoints.find(ep);
+        if (it == endpoints.end()) return;
+        auto held = stream_mutes.find(ep);
+        if (!it->second.muted) {
+            stream_mutes[ep].insert(c.id);
+            request_mute(ep, true);
+        } else if (held != stream_mutes.end() && !held->second.empty()) {
+            held->second.insert(c.id);  // another stream already muted it: share
+        } else if (panic_muted.erase(ep)) {
+            stream_mutes[ep].insert(c.id);  // the stream keeps it muted; the panic gets it back when it ends
+        }
+    }
+
+    void release_stream_mute(Conn& c) {
+        auto held = stream_mutes.find(c.stream_endpoint);
+        if (held == stream_mutes.end() || held->second.erase(c.id) == 0 || !held->second.empty()) return;
+        stream_mutes.erase(held);
+        auto it = endpoints.find(c.stream_endpoint);
+        if (it == endpoints.end() || !it->second.muted) return;
+        if (panic)
+            panic_muted.insert(c.stream_endpoint);  // stays muted until the panic ends
+        else
+            request_mute(c.stream_endpoint, false);
+    }
 
     // Mutes this server asked for and the OS has not confirmed yet. The OS
     // applies them asynchronously, so until the echo arrives (or 1 s passes)
@@ -852,6 +883,9 @@ struct Server::Impl {
                 if (!c->dead && c->out_pos < c->out.size()) flush_conn(*c);
             reap();
         }
+        // Server::stop() normally ended the streams already; if its wait timed
+        // out, end them here so capture stops and "mute the PC" is undone.
+        for (auto& [id, c] : conns) end_stream(*c, ErrorCode::None, false);
         for (auto& [id, c] : conns) net::close_socket(c->fd);
         conns.clear();
     }
@@ -959,8 +993,8 @@ void Server::revoke(const Id16& controller_id) {
 
 void Server::stream_failed(uint64_t stream_id, ErrorCode reason) {
     post([this, stream_id, reason] {
-        auto it = impl_->conns.find(stream_id);
-        if (it != impl_->conns.end()) impl_->end_stream(*it->second, reason, true);
+        for (auto& [cid, c] : impl_->conns)
+            if (c->streaming && c->stream_id == stream_id) return impl_->end_stream(*c, reason, true);
     });
 }
 
@@ -1002,6 +1036,8 @@ void Server::endpoint_upsert(const EndpointInfo& e) {
         if (!is_new && it->second == e) return;
         // Unmuted by hand during a panic: forget it (PANIC_MUTE 0 must not touch it again).
         if (!e.muted && impl_->panic_muted.count(e.id)) impl_->panic_muted.erase(e.id);
+        // Same for a stream's "mute the PC": the user took it back.
+        if (!e.muted) impl_->stream_mutes.erase(e.id);
         impl_->endpoints[e.id] = e;
         impl_->broadcast(encode_endpoint(e));
         // A device plugged in during a panic is muted too.
@@ -1015,6 +1051,7 @@ void Server::endpoint_upsert(const EndpointInfo& e) {
 void Server::endpoint_removed(const std::string& id) {
     post([this, id] {
         impl_->pending_mute.erase(id);
+        impl_->stream_mutes.erase(id);
         for (auto& [cid, c] : impl_->conns)
             if (c->streaming && c->stream_endpoint == id) impl_->end_stream(*c, ErrorCode::ConnectionLost, true);
         impl_->free_slot(id);

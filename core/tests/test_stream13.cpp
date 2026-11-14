@@ -503,3 +503,124 @@ TEST(v13_datagrams_arriving_before_the_key_are_kept) {
     for (size_t i = 0; i < c.got.size(); ++i) CHECK(c.got[i].seq == i && !c.got[i].lost);
     net::close_socket(tx);
 }
+
+// Review 1.3 (SEC-1): an old authenticated datagram must never be played again.
+TEST(v13_reorder_never_goes_back_so_replays_are_dropped) {
+    Reorder r;
+    std::vector<uint64_t> out;
+    auto sink = [&](uint64_t s, const Bytes&, bool) { out.push_back(s); };
+    for (uint64_t s = 0; s < 300; ++s) r.push(s, pkt(1), sink);
+    REQUIRE(out.size() == 300);
+    out.clear();
+    for (uint64_t s = 10; s < 20; ++s) r.push(s, pkt(1), sink);  // replay of 2 s ago
+    r.push(0, pkt(1), sink);
+    r.push(150, pkt(1), sink);  // within kResync behind: also old
+    CHECK(out.empty());
+    r.push(300, pkt(1), sink);  // the live stream carries on untouched
+    REQUIRE(out.size() == 1);
+    CHECK(out[0] == 300);
+}
+
+// SEC-7: once listening stops, nothing that arrives is kept for later.
+TEST(v13_receiver_keeps_nothing_after_stop) {
+    Collect c;
+    StreamReceiver rx(c);
+    std::string err;
+    const uint16_t port = rx.open(&err);
+    REQUIRE(port != 0);
+    rx.stop();
+    const Key32 key = random_array<32>();
+    net::socket_t tx = net::bind_udp(0, nullptr, &err);
+    REQUIRE(tx != net::kInvalidSocket);
+    const Bytes p = pkt(7);
+    const Bytes d = seal_audio(key, 0, 0, kStreamCodecOpus, p.data(), p.size());
+    net::send_udp(tx, "127.0.0.1", port, d.data(), d.size());
+    CHECK(eventually([&] { return rx.rejected() >= 1; }));
+    rx.open(&err);  // a new stream is asked for later with the same key: the old datagram is gone
+    rx.start(key, "127.0.0.1");
+    std::this_thread::sleep_for(80ms);
+    CHECK(c.size() == 0);
+    net::close_socket(tx);
+}
+
+namespace {
+struct Phone {
+    Listener l;
+    Client c;
+    Phone(Rig& rig, const Id16& cid, const PairingRecord& rec) : c(cid, "phone", l, quick()) {
+        c.resume("127.0.0.1", rig.srv->port(), rec);
+    }
+    bool streaming() {
+        std::lock_guard<std::mutex> lk(l.mu);
+        return l.stream.active;
+    }
+};
+}  // namespace
+
+// SEC-2: ending a stream during a panic must not bring the speakers back.
+TEST(v13_panic_keeps_the_output_muted_when_a_stream_ends) {
+    Rig rig;
+    REQUIRE(rig.started);
+    const Id16 cid = random_array<16>();
+    Phone a(rig, cid, rig.add_phone(cid));
+    REQUIRE(eventually([&] { return live(a.l); }));
+    REQUIRE(a.c.stream_start(kStreamFlagMutePc));
+    REQUIRE(eventually([&] { return a.streaming() && rig.be.muted("OUT1"); }));
+    rig.srv->panic_mute(true);
+    CHECK(eventually([&] {
+        std::lock_guard<std::mutex> lk(a.l.mu);
+        return a.l.info.panic;
+    }));
+    a.c.stream_stop();
+    CHECK(eventually([&] { return !a.streaming() && rig.streams.n_stopped() == 1; }));
+    std::this_thread::sleep_for(150ms);
+    CHECK(rig.be.muted("OUT1"));  // still muted: it belongs to the panic now
+    rig.srv->panic_mute(false);
+    CHECK(eventually([&] { return !rig.be.muted("OUT1"); }));  // and comes back with it
+}
+
+// SEC-2 (related): two phones asked to mute the PC; it stays muted until the last one stops.
+TEST(v13_mute_pc_lasts_until_the_last_stream_ends) {
+    Rig rig;
+    REQUIRE(rig.started);
+    const Id16 ida = random_array<16>(), idb = random_array<16>();
+    Phone a(rig, ida, rig.add_phone(ida));
+    Phone b(rig, idb, rig.add_phone(idb));
+    REQUIRE(eventually([&] { return live(a.l) && live(b.l); }));
+    REQUIRE(a.c.stream_start(kStreamFlagMutePc));
+    REQUIRE(eventually([&] { return a.streaming() && rig.be.muted("OUT1"); }));
+    REQUIRE(b.c.stream_start(kStreamFlagMutePc));
+    REQUIRE(eventually([&] { return b.streaming(); }));
+    a.c.stream_stop();
+    CHECK(eventually([&] { return !a.streaming(); }));
+    std::this_thread::sleep_for(150ms);
+    CHECK(rig.be.muted("OUT1"));  // B is still listening
+    b.c.stream_stop();
+    CHECK(eventually([&] { return !b.streaming() && !rig.be.muted("OUT1"); }));
+}
+
+// SEC-4: a failure reported by an old capture must not end the stream that replaced it.
+TEST(v13_late_failure_of_an_old_stream_is_ignored) {
+    Rig rig;
+    REQUIRE(rig.started);
+    const Id16 cid = random_array<16>();
+    Phone a(rig, cid, rig.add_phone(cid));
+    REQUIRE(eventually([&] { return live(a.l); }));
+    REQUIRE(a.c.stream_start(0));
+    REQUIRE(eventually([&] { return a.streaming() && rig.streams.n_started() == 1; }));
+    REQUIRE(a.c.stream_start(0));  // restart (e.g. another output)
+    REQUIRE(eventually([&] { return rig.streams.n_started() == 2; }));
+    uint64_t old_id = 0, new_id = 0;
+    {
+        std::lock_guard<std::mutex> lk(rig.streams.mu);
+        old_id = rig.streams.started[0].id;
+        new_id = rig.streams.started[1].id;
+    }
+    CHECK(old_id != new_id);
+    rig.srv->stream_failed(old_id, ErrorCode::ConnectionLost);
+    std::this_thread::sleep_for(150ms);
+    CHECK(a.streaming());
+    CHECK(rig.obs.streams.load() == 1);
+    rig.srv->stream_failed(new_id, ErrorCode::ConnectionLost);
+    CHECK(eventually([&] { return !a.streaming(); }));
+}
