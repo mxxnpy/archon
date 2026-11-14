@@ -62,6 +62,7 @@ private:
     ULONG_PTR gdiplus_ = 0;
     ULONGLONG pair_started_ = 0;
     HFONT font_title_ = nullptr;
+    HBRUSH surface_brush_ = nullptr;
     HICON icon_large_ = nullptr;
     UINT taskbar_created_ = 0;
     bool first_run_ = false;

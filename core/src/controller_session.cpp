@@ -63,7 +63,9 @@ void ControllerSession::on_frame(const uint8_t* p, size_t n, Output& out) {
     }
     Bytes msg;
     if (!channel_.open(p, n, msg) || msg.empty()) {
-        fail(out, ErrorCode::AuthFailed);
+        // A forged/corrupted segment on the wire: drop the link and reconnect.
+        // It says nothing about the pairing, so it must not look like a refusal.
+        fail(out, ErrorCode::ConnectionLost);
         return;
     }
     handle_app(msg, out);

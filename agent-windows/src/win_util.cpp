@@ -109,10 +109,14 @@ Config load_config() {
     if (!have_id) {
         cfg.first_run = true;
         cfg.agent_id = arc::random_array<16>();
-        std::ofstream out(path, std::ios::trunc);
-        out << "# Archon agent configuration\n";
-        out << "id=" << arc::to_hex(cfg.agent_id) << "\n";
-        out << "port=" << cfg.port << "\n";
+        const std::wstring tmp = path + L".tmp";
+        {
+            std::ofstream out(tmp, std::ios::trunc);
+            out << "# Archon agent configuration\n";
+            out << "id=" << arc::to_hex(cfg.agent_id) << "\n";
+            out << "port=" << cfg.port << "\n";
+        }
+        MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
     }
     return cfg;
 }
@@ -124,8 +128,16 @@ void save_lockout(int lockouts, int64_t locked_until) {
     while (std::getline(in, line))
         if (line.rfind("lockouts=", 0) != 0 && line.rfind("locked_until=", 0) != 0) kept += line + "\n";
     in.close();
-    std::ofstream out(path, std::ios::trunc);
-    out << kept << "lockouts=" << lockouts << "\nlocked_until=" << locked_until << "\n";
+    // Atomic replace: losing agent.cfg would change the agent id (phones would
+    // have to pair again), so never truncate it in place.
+    const std::wstring tmp = path + L".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << kept << "lockouts=" << lockouts << "\nlocked_until=" << locked_until << "\n";
+        out.flush();
+        if (!out) return;
+    }
+    MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
 }
 
 static const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";

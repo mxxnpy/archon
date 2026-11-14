@@ -13,7 +13,7 @@ struct MixerView: View {
             if model.status == .failed || !model.synced {
                 waiting
             } else {
-                ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 12) {
                         if let e = model.currentEndpoint { MasterArc(endpoint: e) }
@@ -38,7 +38,7 @@ struct MixerView: View {
                     StatusLine(color: Archon.warn, text: "Reconectando…")
                         .padding(.horizontal, 16).padding(.vertical, 10)
                         .background(Archon.raised, in: Capsule())
-                        .padding(.bottom, 28)  // never covers the master arc
+                        .padding(.vertical, 12)  // own row: never covers the arc or a card
                 }
                 }
             }
@@ -79,7 +79,7 @@ struct MixerView: View {
                         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Archon.muted)
                     }
                 }
-                .padding(.horizontal, 14).padding(.vertical, 8)
+                .padding(.horizontal, 14).frame(minHeight: 44)  // 44 pt touch target
                 .background(Archon.surface, in: Capsule())
             }
             .disabled(model.endpoints.count < 2)
@@ -285,6 +285,14 @@ struct AppCard: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 16).padding(.bottom, 18)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(name + (source.playing ? String(localized: ", tocando") : "") + (source.muted ? String(localized: ", mudo") : ""))
+            .accessibilityValue("\(pct)%")
+            .accessibilityAdjustableAction { dir in
+                let step = CoreClient.maxVolume / 20
+                let v = source.volume + (dir == .increment ? step : -step)
+                model.setVolume(endpoint: false, id: source.id, volume: min(max(v, 0), CoreClient.maxVolume))
+            }
             MuteButton(label: name, muted: source.muted) {
                 model.setMute(endpoint: false, id: source.id, muted: !source.muted)
             }
@@ -305,13 +313,6 @@ struct AppCard: View {
                 }
                 .onEnded { _ in if drag.dragging { drag.end() } }
         )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(name + (source.playing ? String(localized: ", tocando") : "") + (source.muted ? String(localized: ", mudo") : ""))
-        .accessibilityValue("\(pct)%")
-        .accessibilityAdjustableAction { dir in
-            let step = CoreClient.maxVolume / 20
-            let v = source.volume + (dir == .increment ? step : -step)
-            model.setVolume(endpoint: false, id: source.id, volume: min(max(v, 0), CoreClient.maxVolume))
-        }
+        .accessibilityElement(children: .contain)
     }
 }

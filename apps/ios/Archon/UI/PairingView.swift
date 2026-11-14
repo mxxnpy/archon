@@ -84,7 +84,7 @@ struct PairingView: View {
         case .awaitingCode: return String(localized: "Aguardando o código")
         case .verifying: return String(localized: "Verificando…")
         case .connected: return String(localized: "Conectado")
-        case .failed: return String(localized: "Falhou")
+        case .failed: return ErrorText.spoken(e)  // say why, not just "failed"
         default: return String(localized: "Conectando…")
         }
     }
@@ -101,6 +101,22 @@ struct PairingView: View {
 }
 
 enum ErrorText {
+    static func spoken(_ e: Int) -> String {
+        switch e {
+        case CoreErr.wrongCode: return String(localized: "Código errado — veja o novo código no PC.")
+        case CoreErr.locked: return String(localized: "Muitos códigos errados. Aguarde alguns minutos.")
+        case CoreErr.rejected: return String(localized: "O pareamento foi recusado no PC.")
+        case CoreErr.busy: return String(localized: "O PC está pareando outro aparelho. Tente de novo em instantes.")
+        case CoreErr.timeout: return String(localized: "Demorou demais. Tente de novo.")
+        case CoreErr.version: return String(localized: "Atualize o Archon no PC e no celular.")
+        case CoreErr.connectFailed: return String(localized: "Não foi possível falar com o PC. Veja se ele está ligado e na mesma rede.")
+        case CoreErr.revoked: return String(localized: "Este pareamento foi removido no PC. Pareie de novo para controlar.")
+        case CoreErr.notRecognized, CoreErr.unknown, CoreErr.authFailed:
+            return String(localized: "O PC não reconheceu este celular. Se você removeu o pareamento no PC, pareie de novo.")
+        default: return String(localized: "Conexão perdida.")
+        }
+    }
+
     static func of(_ e: Int) -> LocalizedStringKey {
         switch e {
         case CoreErr.wrongCode: return "Código errado — veja o novo código no PC."

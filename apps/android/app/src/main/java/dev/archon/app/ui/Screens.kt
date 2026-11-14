@@ -300,7 +300,7 @@ private fun PcRowView(row: PcRow, modifier: Modifier, onClick: () -> Unit) {
         // State in words too (colour is never the only cue).
         Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
             Text(row.target.name, style = Type.Body, color = if (row.online) Archon.Paper else Archon.Muted,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(stringResource(when { !row.paired -> R.string.pc_state_new; row.online -> R.string.pc_state_online
                 else -> R.string.pc_state_offline }), style = Type.Caption, color = Archon.Muted)
         }
@@ -529,8 +529,9 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
             }
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Row(
-                    Modifier.background(Archon.Surface, CircleShape).clickable(enabled = link.endpoints.size > 1) { devices = true }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    Modifier.heightIn(min = 48.dp).background(Archon.Surface, CircleShape)  // 48 dp touch target
+                        .clickable(enabled = link.endpoints.size > 1) { devices = true }
+                        .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(endpoint?.name ?: target.name, style = Type.Caption, color = Archon.Paper,
@@ -606,7 +607,8 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
         Box(Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            // Extra bottom room while reconnecting so the status pill never covers a card.
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (live) 24.dp else 96.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxSize().alpha(if (live) 1f else 0.5f)

@@ -86,9 +86,15 @@ class Discovery(context: Context) {
         val id = info.attributes["id"]?.toString(Charsets.UTF_8)?.lowercase() ?: return
         if (id.length != 32) return
         val host = hostOf(info) ?: return
+        // Bounded and sanitized: mDNS is unauthenticated, anyone can advertise.
+        if (!_found.value.containsKey(id) && _found.value.size >= MAX_FOUND) return
+        val name = info.serviceName.filter { !it.isISOControl() && it !in "\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069" }
+            .take(64).ifBlank { host }
         byServiceName[info.serviceName] = id
-        _found.value = _found.value + (id to DiscoveredPc(id, info.serviceName, host, info.port))
+        _found.value = _found.value + (id to DiscoveredPc(id, name, host, info.port))
     }
+
+    private companion object { const val MAX_FOUND = 32 }
 
     private fun hostOf(info: NsdServiceInfo): String? {
         val addrs = if (Build.VERSION.SDK_INT >= 34) info.hostAddresses else listOfNotNull(@Suppress("DEPRECATION") info.host)

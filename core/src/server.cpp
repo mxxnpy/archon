@@ -86,6 +86,7 @@ struct Server::Impl {
     std::deque<Clock::time_point> pair_requests;         // last minute, all sources
 
     Clock::time_point last_refused_log{};
+    Clock::time_point last_auth_log{};
 
     // Revoked in this run: denied even if the store failed to persist the removal.
     std::set<Id16> revoked;
@@ -356,7 +357,10 @@ struct Server::Impl {
     void on_resume_confirm(Conn& c, Reader& r) {
         Key32 tag;
         if (!decode_key(r, tag) || !c.keys || !ct_equal(c.keys->tag_controller, tag)) {
-            log("authentication failed for " + c.name + " (" + c.address + ")");
+            if (Clock::now() - last_auth_log > std::chrono::minutes(1)) {
+                last_auth_log = Clock::now();
+                log("authentication failed for " + c.name + " (" + c.address + ") (logged at most once a minute)");
+            }
             return send_error_and_close(c, ErrorCode::AuthFailed, "authentication failed");
         }
         // The pairing may have been revoked while the handshake was in flight.
@@ -757,6 +761,16 @@ void Server::revoke(const Id16& controller_id) {
             if (c->controller_id == controller_id && !c->dead)
                 impl_->send_error_and_close(*c, ErrorCode::Revoked, "pairing removed on the computer");
         }
+    });
+}
+
+void Server::reset_pairing_lockout() {
+    post([this] {
+        impl_->locked_until = {};
+        impl_->failures.clear();
+        impl_->lockouts = 0;
+        observer_.on_pairing_lockout(0, 0);
+        impl_->log("pairing lockout cleared on the PC");
     });
 }
 

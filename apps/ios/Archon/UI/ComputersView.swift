@@ -137,7 +137,7 @@ struct PCRowView: View {
                 Dot(color: statusColor(row))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.target.name).font(.archonBody).foregroundStyle(row.online ? Archon.paper : Archon.muted)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Text(row.paired ? (row.online ? "Disponível" : "Offline") : "Novo · toque em Parear")
                         .font(.archonCaption).foregroundStyle(Archon.muted)
                 }

@@ -86,8 +86,14 @@ final class Discovery: ObservableObject {
                         case .name(let n, _): h = n
                         @unknown default: h = "\(host)"
                         }
+                        // Bounded and sanitized: mDNS is unauthenticated, anyone can advertise.
+                        guard self.found[id] != nil || self.found.count < 32 else { conn.cancel(); return }
+                        let clean = String(name.unicodeScalars.filter {
+                            !CharacterSet.controlCharacters.contains($0) && !(0x202A...0x202E).contains($0.value)
+                                && !(0x2066...0x2069).contains($0.value) && $0.value != 0x200E && $0.value != 0x200F
+                        }.prefix(64))
                         self.byEndpoint[result.endpoint] = id
-                        self.found[id] = DiscoveredPC(agentId: id, name: name, host: h, port: port.rawValue)
+                        self.found[id] = DiscoveredPC(agentId: id, name: clean.isEmpty ? h : clean, host: h, port: port.rawValue)
                     }
                     conn.cancel()
                 case .failed, .cancelled:

@@ -131,6 +131,8 @@ public:
     // Thread-safe controls (usually called from the UI thread).
     void reject_pairing(uint64_t conn_id);
     void revoke(const Id16& controller_id);
+    // Local action on the PC: clear a pairing lockout and its escalation.
+    void reset_pairing_lockout();
 
     // AudioSink (thread-safe)
     void endpoint_upsert(const EndpointInfo& e) override;

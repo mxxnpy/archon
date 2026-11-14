@@ -17,10 +17,23 @@ final class PairingStore {
     private let defaults = UserDefaults.standard
 
     /// Stable random id of this phone.
+    /// Kept in the Keychain (this device only) so backups restored on another
+    /// phone don't carry this phone's identity.
     lazy var controllerId: Data = {
-        if let d = defaults.data(forKey: "controllerId"), d.count == 16 { return d }
-        let id = CoreClient.generateId()
-        defaults.set(id, forKey: "controllerId")
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                kSecAttrService as String: "dev.archon.identity",
+                                kSecAttrAccount as String: "controllerId",
+                                kSecReturnData as String: true]
+        var out: CFTypeRef?
+        if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data, d.count == 16 { return d }
+        let id = (defaults.data(forKey: "controllerId")).flatMap { $0.count == 16 ? $0 : nil } ?? CoreClient.generateId()
+        let add: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                  kSecAttrService as String: "dev.archon.identity",
+                                  kSecAttrAccount as String: "controllerId",
+                                  kSecValueData as String: id,
+                                  kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        SecItemAdd(add as CFDictionary, nil)
+        defaults.removeObject(forKey: "controllerId")
         return id
     }()
 

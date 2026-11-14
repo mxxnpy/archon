@@ -48,8 +48,8 @@ void draw_ring(Gdiplus::Graphics& g, float x, float y, float d, float w, float f
     if (fraction > 0.002f) g.DrawArc(&on, x, y, d, d, start, sweep * std::min(fraction, 1.f));
 }
 
-enum MenuId : UINT { ID_DEVICES = 100, ID_AUTOSTART, ID_OPEN_LOG, ID_EXIT };
-enum CtrlId : int { IDC_REJECT = 200, IDC_LIST, IDC_REMOVE, IDC_CLOSE };
+enum MenuId : UINT { ID_DEVICES = 100, ID_AUTOSTART, ID_OPEN_LOG, ID_UNLOCK, ID_EXIT };
+enum CtrlId : int { IDC_REJECT = 200, IDC_LIST, IDC_REMOVE, IDC_CLOSE, IDC_TITLE = 300, IDC_WANTS, IDC_CODE, IDC_HINT };
 
 struct PairRequest {
     uint64_t conn;
@@ -88,6 +88,7 @@ struct Text {
     const wchar_t* first_text;
     const wchar_t* confirm_remove; // %s
     const wchar_t* never;
+    const wchar_t* unlock;
 };
 
 const Text& T() {
@@ -114,7 +115,8 @@ const Text& T() {
                          L"Archon está rodando",
                          L"Abra o app Archon no celular, na mesma rede, para conectar.",
                          L"Remover “%s”? O aparelho precisará parear de novo.",
-                         L"—"};
+                         L"—",
+                         L"Desbloquear pareamento"};
     static const Text en{L"Archon",
                          L"Paired devices…",
                          L"Start with Windows",
@@ -138,7 +140,8 @@ const Text& T() {
                          L"Archon is running",
                          L"Open the Archon app on your phone, on the same network, to connect.",
                          L"Remove “%s”? The device will need to pair again.",
-                         L"—"};
+                         L"—",
+                         L"Unlock pairing"};
     return is_portuguese_ui() ? pt : en;
 }
 
@@ -255,6 +258,7 @@ void AgentUi::destroy() {
     if (font_) DeleteObject(font_);
     if (font_code_) DeleteObject(font_code_);
     if (font_title_) DeleteObject(font_title_);
+    if (surface_brush_) DeleteObject(surface_brush_);
     if (gdiplus_) Gdiplus::GdiplusShutdown(gdiplus_);
 }
 
@@ -327,6 +331,7 @@ void AgentUi::show_menu() {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_DEVICES, T().devices);
     AppendMenuW(m, MF_STRING | (autostart_enabled() ? MF_CHECKED : 0), ID_AUTOSTART, T().autostart);
+    AppendMenuW(m, MF_STRING, ID_UNLOCK, T().unlock);  // clears a lockout caused by wrong codes
     AppendMenuW(m, MF_STRING, ID_OPEN_LOG, T().open_log);
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_EXIT, T().exit);
@@ -344,6 +349,9 @@ void AgentUi::show_menu() {
             ShellExecuteW(nullptr, L"open", log.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             break;
         }
+        case ID_UNLOCK:
+            if (server_) server_->reset_pairing_lockout();
+            break;
         case ID_EXIT: PostQuitMessage(0); break;
         default: break;
     }
@@ -415,8 +423,8 @@ void AgentUi::show_pairing(uint64_t conn, const std::wstring& name, const std::w
     RECT work;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
     // Borderless card (Windows 11 rounds it and keeps the system shadow).
-    pair_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"ArchonPair", L"Archon", WS_POPUP, 0, 0, 100, 100,
-                            nullptr, nullptr, inst_, this);
+    pair_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"ArchonPair", L"Archon", WS_POPUP | WS_CLIPCHILDREN,
+                            0, 0, 100, 100, nullptr, nullptr, inst_, this);
     if (!pair_) return;
     const DWM_WINDOW_CORNER_PREFERENCE round = DWMWCP_ROUND;
     DwmSetWindowAttribute(pair_, DWMWA_WINDOW_CORNER_PREFERENCE, &round, sizeof round);
@@ -439,6 +447,23 @@ void AgentUi::show_pairing(uint64_t conn, const std::wstring& name, const std::w
         font_dpi_ = dpi;
     }
     SendMessageW(btn, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
+    // Real text controls (not painted text) so Narrator and other screen
+    // readers can read the request and the code.
+    if (!surface_brush_) surface_brush_ = CreateSolidBrush(kSurface);
+    const std::wstring wants = fmt(T().wants, pair_name_.c_str());
+    auto label = [&](int id, const std::wstring& text, int x, int y, int cw, int ch, HFONT f) {
+        HWND c = CreateWindowExW(0, L"STATIC", text.c_str(), WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX |
+                                 SS_CENTERIMAGE | SS_ENDELLIPSIS, x, y, cw, ch, pair_,
+                                 reinterpret_cast<HMENU>(INT_PTR(id)), inst_, nullptr);
+        SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(f), TRUE);
+    };
+    label(IDC_TITLE, L"Archon", pad + scale(pair_, 28), pad - scale(pair_, 2), w - 2 * pad - scale(pair_, 28),
+          scale(pair_, 22), font_title_);
+    label(IDC_WANTS, wants, pad, pad + scale(pair_, 34), w - 2 * pad, scale(pair_, 20), font_);
+    label(IDC_CODE, pair_code_, pad, pad + scale(pair_, 58), w - 2 * pad, scale(pair_, 54), font_code_);
+    label(IDC_HINT, T().type_code, pad, hgt - pad - bh, w - 2 * pad - bw - scale(pair_, 8), bh, font_);
+    // Window name read first by Narrator when the popup takes focus.
+    SetWindowTextW(pair_, (L"Archon. " + wants + L". " + pair_code_).c_str());
     SetTimer(pair_, kCountdownTimer, 250, nullptr);
     ShowWindow(pair_, SW_SHOWNORMAL);
     SetForegroundWindow(pair_);
@@ -490,28 +515,7 @@ LRESULT CALLBACK AgentUi::pair_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 const float d = float(scale(h, 16)), sw = float(std::max(2, scale(h, 2)));
                 draw_ring(g, float(pad) + sw / 2, float(pad) + sw / 2, d, sw, 1.f - std::min(left, 1.f), kAccent, -90.f, 360.f);
             }
-            SetBkMode(dc, TRANSPARENT);
-            HGDIOBJ old = SelectObject(dc, self->font_title_);
-            SetTextColor(dc, kPaper);
-            RECT r = {pad + scale(h, 28), pad - scale(h, 1), rc.right - pad, pad + scale(h, 20)};
-            DrawTextW(dc, L"Archon", -1, &r, DT_SINGLELINE | DT_VCENTER);
-            // One line: who wants to connect.
-            SelectObject(dc, self->font_);
-            SetTextColor(dc, kMuted);
-            r = {pad, pad + scale(h, 34), rc.right - pad, pad + scale(h, 54)};
-            const std::wstring wants = fmt(T().wants, self->pair_name_.c_str());
-            DrawTextW(dc, wants.c_str(), -1, &r, DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
-            // The code.
-            SelectObject(dc, self->font_code_);
-            SetTextColor(dc, kPaper);
-            r = {pad, pad + scale(h, 58), rc.right - pad, pad + scale(h, 112)};
-            DrawTextW(dc, self->pair_code_.c_str(), -1, &r, DT_SINGLELINE | DT_VCENTER);
-            // Hint next to the button.
-            SelectObject(dc, self->font_);
-            SetTextColor(dc, kMuted);
-            r = {pad, rc.bottom - pad - scale(h, 32), rc.right - pad - scale(h, 104), rc.bottom - pad};
-            DrawTextW(dc, T().type_code, -1, &r, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-            SelectObject(dc, old);
+            // Texts are STATIC child controls (accessible); only the ring is painted here.
 
             BitBlt(wdc, 0, 0, rc.right, rc.bottom, dc, 0, 0, SRCCOPY);
             SelectObject(dc, oldbm);
@@ -519,6 +523,13 @@ LRESULT CALLBACK AgentUi::pair_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
             DeleteDC(dc);
             EndPaint(h, &ps);
             return 0;
+        }
+        case WM_CTLCOLORSTATIC: {
+            const int id = GetDlgCtrlID(reinterpret_cast<HWND>(l));
+            HDC dc = reinterpret_cast<HDC>(w);
+            SetTextColor(dc, (id == IDC_WANTS || id == IDC_HINT) ? kMuted : kPaper);
+            SetBkColor(dc, kSurface);
+            return reinterpret_cast<LRESULT>(self->surface_brush_);
         }
         case WM_DRAWITEM: {
             // Pill button: raised fill, white label; accent outline when focused.

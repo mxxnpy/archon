@@ -354,9 +354,10 @@ bool Client::run_connection(bool& ever_ready) {
         cmds_.clear();
     }
 
-    // An unverified "not recognized" from one address may be a spoofer: only
-    // give up once every known address has said so in a row.
-    if (reason == ErrorCode::NotRecognized && mode_ == Mode::Resume) {
+    // Before the secure channel is up nothing the peer says is authenticated:
+    // any refusal (not recognized, busy, version, malformed reply…) may come from
+    // a spoofer advertised first. Only give up once every known address refused.
+    if (mode_ == Mode::Resume && !ever_ready && is_fatal(reason)) {
         not_recognized_[(attempt_ + addrs_.size() - 1) % addrs_.size()] = true;
         bool all = true;
         for (bool b : not_recognized_) all = all && b;

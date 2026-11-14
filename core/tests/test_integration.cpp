@@ -604,6 +604,44 @@ TEST(integration_pairing_requests_are_rate_limited) {
     CHECK(rig.observer.requests == 1);  // later ones refused as busy within the interval
 }
 
+TEST(integration_any_unverified_refusal_moves_to_next_address) {
+    // SEC-C1: a spoofer answering with a plaintext ERROR other than 3/8/10
+    // (here "unsupported version") must not stop the phone before it tries
+    // the real PC at the next address.
+    Rig real;
+    Listener l;
+    const Id16 cid = random_array<16>();
+    Client c(cid, "phone", l, fast_timing());
+    auto rec = pair(real, c, l);
+    REQUIRE(rec.has_value());
+    c.disconnect();
+    net::init();
+    uint16_t port = 0;
+    std::string err;
+    net::socket_t ls = net::listen_tcp(0, true, &port, &err);
+    REQUIRE(ls != net::kInvalidSocket);
+    std::atomic<bool> go{true};
+    std::thread fake([&] {
+        while (go) {
+            std::vector<net::PollItem> it{{ls, true, false}};
+            if (net::poll(it, 100) <= 0) continue;
+            net::socket_t s = net::accept_tcp(ls, nullptr);
+            if (s == net::kInvalidSocket) continue;
+            const Bytes f = make_frame(encode_error({ErrorCode::UnsupportedVersion, "nope"}));
+            net::send_some(s, f.data(), f.size());
+            std::this_thread::sleep_for(50ms);
+            net::close_socket(s);
+        }
+    });
+    Listener l2;
+    Client c2(cid, "phone", l2, fast_timing());
+    c2.resume({{"127.0.0.1", port}, {"127.0.0.1", real.port}}, *rec);
+    CHECK(wait_for(l2.mu, [&] { return l2.status == ClientStatus::Connected; }, 8000));
+    go = false;
+    fake.join();
+    net::close_socket(ls);
+}
+
 TEST(lan_only_address_filter) {
     CHECK(net::is_local_network_address("192.168.0.10"));
     CHECK(net::is_local_network_address("10.1.2.3"));
