@@ -234,7 +234,8 @@ private fun Radar(rows: List<PcRow>, searching: Boolean, reduce: Boolean, onPick
                     androidx.compose.runtime.key(row.target.agentId ?: row.target.host) {
                         val enter = remember { Animatable(if (reduce) 1f else 0f) }
                         LaunchedEffect(Unit) { if (!reduce) enter.animateTo(1f, tween(Motion.UI, easing = Motion.Easing)) }
-                        val labelLeft = x > cx
+                        // Outer orbit: toward the centre; inner orbit: outward (keeps the phone glyph clear).
+                        val labelLeft = if (row.paired && row.online) x < cx else x > cx
                         Row(
                             Modifier.scale(0.6f + 0.4f * enter.value).alpha(enter.value).clickable { onPick(row) }
                                 .clearAndSetSemantics { },
@@ -261,7 +262,9 @@ private fun Radar(rows: List<PcRow>, searching: Boolean, reduce: Boolean, onPick
                 placeables.forEachIndexed { i, p ->
                     val (_, x, y) = points[i]
                     val px = x.roundToPx()
-                    val left = (if (x > cx) px - p.width + half else px - half).coerceIn(0, constraints.maxWidth - p.width)
+                    val inner = points[i].first.let { it.paired && it.online }
+                    val toLeft = if (inner) x < cx else x > cx
+                    val left = (if (toLeft) px - p.width + half else px - half).coerceIn(0, constraints.maxWidth - p.width)
                     var top = y.roundToPx() - p.height / 2
                     // Greedy de-overlap: push a label below any label it would cover.
                     var moved = true

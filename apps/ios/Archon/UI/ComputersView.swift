@@ -198,7 +198,10 @@ private struct RadarPoint: View {
 
     var body: some View {
         let p = point
-        let labelLeft = p.x > center.x
+        // Outer orbit: name hangs toward the centre (stays on screen). Inner
+        // orbit: name hangs outward (never covers the phone glyph).
+        let inner = row.paired && row.online
+        let labelLeft = inner ? p.x < center.x : p.x > center.x
         let x: CGFloat = labelLeft ? p.x + 4 - 70 : p.x - 4 + 70
         return Button { pick(row) } label: {
             HStack(spacing: 6) {
