@@ -72,4 +72,5 @@
     <string name="tile_failed">Couldn\'t reach the PC</string>
     <string name="tile_muted">Everything on the PC is muted</string>
     <string name="tile_unmuted">The PC\'s sound is back on</string>
+    <string name="tile_unsupported">Update Archon on the PC to use this</string>
 </resources>

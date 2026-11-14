@@ -95,6 +95,8 @@ public:
     virtual void on_pairing_lockout(int /*lockouts*/, int64_t /*locked_until_unix*/) {}
     // Panic mute turned on/off (by a controller or locally).
     virtual void on_panic_changed(bool /*active*/) {}
+    // 1.3: a phone started/stopped listening (count of active streams).
+    virtual void on_streams_changed(size_t /*active*/) {}
 };
 
 struct ServerConfig {
@@ -127,6 +129,18 @@ struct ServerConfig {
     bool lan_only = true;
 };
 
+// 1.3: capture + encode + send for "listen on the phone", implemented by the
+// agent (the core has no audio codec). Calls come from the server thread.
+class StreamService {
+public:
+    virtual ~StreamService() = default;
+    // Capture output `endpoint_id`, encode Opus 48 kHz stereo 20 ms and send
+    // datagrams sealed with `key` to dest_host:dest_port. Must not block long.
+    virtual bool start(uint64_t stream_id, const std::string& endpoint_id, const std::string& dest_host,
+                       uint16_t dest_port, const Key32& key, std::string* err) = 0;
+    virtual void stop(uint64_t stream_id) = 0;
+};
+
 class Server final : public AudioSink {
 public:
     Server(ServerConfig cfg, AudioBackend& backend, TrustStore& store, ServerObserver& observer);
@@ -146,6 +160,16 @@ public:
     void reset_pairing_lockout();
     // Local panic mute (tray, hotkey): same as a controller's PANIC_MUTE.
     void panic_mute(bool on);
+    // Flip the panic mute based on the server's own state (tray, hotkey).
+    void panic_toggle();
+    // 1.3: enables "listen on the phone". Set before start(); the service must
+    // outlive the server.
+    void set_stream_service(StreamService* service) { stream_service_ = service; }
+    // The service reports a stream that ended on its own (output gone, capture
+    // error): the controller is told and "mute the PC" is undone.
+    void stream_failed(uint64_t stream_id, ErrorCode reason);
+    // Number of active streams (tray status).
+    size_t active_streams() const { return active_streams_; }
 
     // AudioSink (thread-safe)
     void endpoint_upsert(const EndpointInfo& e) override;
@@ -163,6 +187,8 @@ private:
     AudioBackend& backend_;
     TrustStore& store_;
     ServerObserver& observer_;
+    StreamService* stream_service_ = nullptr;
+    std::atomic<size_t> active_streams_{0};
     std::unique_ptr<Impl> impl_;
     // Guards impl_'s lifetime against post() from other threads (backend
     // callbacks racing with stop()): post never touches a dying Impl.

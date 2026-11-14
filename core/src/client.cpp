@@ -140,16 +140,49 @@ void Client::set_source_route(const std::string& id, const std::string& endpoint
     enqueue(MsgType::SetSourceRoute, id, encode_set_route(id, endpoint), true);
 }
 void Client::panic_mute(bool on) {
-    if (live_) {
-        enqueue(MsgType::PanicMute, {}, encode_flag(MsgType::PanicMute, on), true);
-        return;
-    }
+    bool live_now;
     {
+        // Decided under mu_: the worker flips live_ and drains the pending
+        // request under the same lock, so a request can't slip between them.
         std::lock_guard<std::mutex> lk(mu_);
-        pending_panic_ = on;  // sent on the next Ready, then forgotten
+        live_now = live_;
+        if (!live_now) {
+            pending_panic_ = on;  // sent on the next Ready if still fresh, then forgotten
+            pending_panic_at_ = std::chrono::steady_clock::now();
+        }
     }
-    waker_.wake();
+    if (live_now) enqueue(MsgType::PanicMute, {}, encode_flag(MsgType::PanicMute, on), true);
+    else waker_.wake();
 }
+bool Client::stream_start(uint8_t flags, const std::string& endpoint_id) {
+    if (!live_) return false;
+    uint16_t port = 0;
+    {
+        std::lock_guard<std::mutex> lk(receiver_mu_);
+        if (!receiver_) {
+            relay_.target = &listener_;
+            receiver_ = std::make_unique<StreamReceiver>(relay_);
+        }
+        std::string err;
+        port = receiver_->open(&err);
+    }
+    if (!port) return false;
+    StreamStart req;
+    req.udp_port = port;
+    req.flags = flags;
+    req.endpoint_id = endpoint_id;
+    enqueue(MsgType::StreamStart, {}, encode_stream_start(req), true);
+    return true;
+}
+
+void Client::stream_stop() {
+    {
+        std::lock_guard<std::mutex> lk(receiver_mu_);
+        if (receiver_) receiver_->stop();
+    }
+    enqueue(MsgType::StreamStop, {}, encode_simple(MsgType::StreamStop), true);
+}
+
 void Client::request_icon(const std::string& key) {
     enqueue(MsgType::GetIcon, key, encode_id(MsgType::GetIcon, key), true);
 }
@@ -236,7 +269,6 @@ bool Client::run_connection(bool& ever_ready) {
                     break;
                 case ControllerEvent::Kind::Ready:
                     ever_ready = true;
-                    live_ = true;
                     last_rx = Clock::now();
                     attempt_ = (attempt_ + addrs_.size() - 1) % addrs_.size();  // stick to what worked
                     refused_.assign(addrs_.size(), ErrorCode::None);
@@ -244,10 +276,13 @@ bool Client::run_connection(bool& ever_ready) {
                     if (meters_) append_frame(out, session.app(encode_flag(MsgType::SetMeters, true)));
                     {
                         std::lock_guard<std::mutex> lk(mu_);
-                        if (pending_panic_) {
+                        live_ = true;
+                        // A panic asked for before the link was up goes now, but only
+                        // if recent: an old request must not undo a newer one made
+                        // elsewhere (hotkey, another phone) while we were away.
+                        if (pending_panic_ && Clock::now() - pending_panic_at_ < std::chrono::seconds(10))
                             append_frame(out, session.app(encode_flag(MsgType::PanicMute, *pending_panic_)));
-                            pending_panic_.reset();
-                        }
+                        pending_panic_.reset();
                     }
                     status(ClientStatus::Connected, ErrorCode::None, host + "|" + std::to_string(port));
                     break;
@@ -255,6 +290,16 @@ bool Client::run_connection(bool& ever_ready) {
                     reason = ev.error;
                     reason_text = ev.message;
                     break;
+                case ControllerEvent::Kind::StreamState: {
+                    // The key arrived inside the encrypted channel: accept audio
+                    // only from this PC's address, sealed with it.
+                    std::lock_guard<std::mutex> lk(receiver_mu_);
+                    if (receiver_) {
+                        if (ev.stream.active) receiver_->start(ev.stream.key, host);
+                        else receiver_->stop();
+                    }
+                    break;
+                }
                 default:
                     break;
             }
@@ -374,6 +419,11 @@ bool Client::run_connection(bool& ever_ready) {
     }
     live_ = false;
     net::close_socket(fd);
+    {
+        // The agent stops streaming when the link closes; a new stream must be asked for.
+        std::lock_guard<std::mutex> lk(receiver_mu_);
+        if (receiver_) receiver_->stop();
+    }
     if (stop_) return false;
     {
         // Commands made while the link was down are stale: the state dump sent on

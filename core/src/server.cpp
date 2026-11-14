@@ -4,6 +4,9 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <future>
+#include <memory>
+#include <optional>
 #include <set>
 #include <tuple>
 
@@ -39,6 +42,9 @@ struct Server::Conn {
     bool dead = false;           // close immediately
     bool half_closed = false;    // FIN sent after the final error; waiting for the peer
     bool listed = false;         // currently reported to the observer as connected
+    bool streaming = false;      // 1.3: listening on the phone
+    std::string stream_endpoint;
+    bool stream_muted_pc = false;  // we muted stream_endpoint for this stream
 
     Id16 controller_id{};
     std::string name;  // cleaned; bound into the handshake transcript
@@ -77,10 +83,103 @@ struct Server::Impl {
     uint16_t next_slot = 1;
     bool metering = false;
 
+    static constexpr size_t kMaxStreams = 2;
+
+    size_t stream_count() const {
+        size_t n = 0;
+        for (auto& [id, c] : conns) n += c->streaming ? 1 : 0;
+        return n;
+    }
+
+    void stream_changed() {
+        s.active_streams_ = stream_count();
+        s.observer_.on_streams_changed(s.active_streams_);
+    }
+
+    void send_stream_state(Conn& c, bool active, const Key32* key, ErrorCode err) {
+        StreamState st;
+        st.active = active;
+        if (active) {
+            st.codec = kStreamCodecOpus;
+            st.sample_rate = 48000;
+            st.channels = 2;
+            st.frame_ms = 20;
+            st.key = *key;
+        }
+        st.error = uint16_t(err);
+        queue_app(c, encode_stream_state(st));
+    }
+
+    // Ends c's stream: stop capture, undo "mute the PC", tell the phone (if it is
+    // still there) why.
+    void end_stream(Conn& c, ErrorCode reason, bool notify) {
+        if (!c.streaming) return;
+        c.streaming = false;
+        if (s.stream_service_) s.stream_service_->stop(c.id);
+        if (c.stream_muted_pc) {
+            auto it = endpoints.find(c.stream_endpoint);
+            if (it != endpoints.end() && it->second.muted) request_mute(c.stream_endpoint, false);
+            c.stream_muted_pc = false;
+        }
+        if (notify) send_stream_state(c, false, nullptr, reason);
+        log("stream stopped for " + c.name);
+        stream_changed();
+    }
+
+    void start_stream(Conn& c, const StreamStart& req) {
+        if (!s.stream_service_) return send_stream_state(c, false, nullptr, ErrorCode::Busy);
+        std::string ep = req.endpoint_id;
+        if (ep.empty())
+            for (auto& [id, e] : endpoints)
+                if (e.is_default && !e.input) ep = id;
+        auto it = endpoints.find(ep);
+        if (req.udp_port == 0 || it == endpoints.end() || it->second.input)
+            return send_stream_state(c, false, nullptr, ErrorCode::Protocol);
+        if (c.streaming) end_stream(c, ErrorCode::None, false);  // restart (other output / port)
+        if (stream_count() >= kMaxStreams) return send_stream_state(c, false, nullptr, ErrorCode::Busy);
+        Key32 key = random_array<32>();
+        std::string err;
+        if (!s.stream_service_->start(c.id, ep, c.address, req.udp_port, key, &err)) {
+            wipe(key.data(), key.size());
+            log("stream could not start: " + err);
+            return send_stream_state(c, false, nullptr, ErrorCode::Busy);
+        }
+        c.streaming = true;
+        c.stream_endpoint = ep;
+        if ((req.flags & kStreamFlagMutePc) && !it->second.muted) {
+            request_mute(ep, true);
+            c.stream_muted_pc = true;
+        }
+        send_stream_state(c, true, &key, ErrorCode::None);
+        wipe(key.data(), key.size());
+        log("stream started for " + c.name);
+        stream_changed();
+    }
+
     // Panic mute: devices this agent muted, so turning it off restores only those.
     bool panic = false;
     std::set<std::string> panic_muted;
-    Clock::time_point panic_at{};
+
+    // Mutes this server asked for and the OS has not confirmed yet. The OS
+    // applies them asynchronously, so until the echo arrives (or 1 s passes)
+    // the requested value is the truth for every decision (panic, streams).
+    struct PendingMute {
+        bool muted;
+        Clock::time_point until;
+        std::optional<bool> reported;  // a contradicting OS report we held back
+    };
+    std::map<std::string, PendingMute> pending_mute;
+
+    void request_mute(const std::string& id, bool muted) {
+        auto it = endpoints.find(id);
+        if (it == endpoints.end()) return;
+        s.backend_.set_endpoint_mute(id, muted);
+        pending_mute[id] = PendingMute{muted, Clock::now() + std::chrono::seconds(1), std::nullopt};
+        if (it->second.muted != muted) {
+            it->second.muted = muted;  // optimistic: every controller sees it at once
+            broadcast(encode_endpoint(it->second));
+        }
+    }
 
     // Pairing policy
     uint64_t pairing_conn = 0;
@@ -146,26 +245,46 @@ struct Server::Impl {
 
     AgentInfo agent_info() const {
         AgentInfo a;
-        a.features = s.backend_.features() | kFeaturePanic;
+        a.features = s.backend_.features() | kFeaturePanic | (s.stream_service_ ? kFeatureStream : 0u);
         a.panic = panic;
         a.os = s.backend_.os_name();
         return a;
     }
 
+    // A request the OS never confirmed: trust the last thing it reported (the
+    // user may have changed it by hand on the PC while ours was in flight).
+    void expire_pending_mutes(Clock::time_point now) {
+        for (auto it = pending_mute.begin(); it != pending_mute.end();) {
+            if (now < it->second.until) {
+                ++it;
+                continue;
+            }
+            auto ep = endpoints.find(it->first);
+            if (it->second.reported && ep != endpoints.end() && ep->second.muted != *it->second.reported) {
+                ep->second.muted = *it->second.reported;
+                if (!ep->second.muted) panic_muted.erase(ep->first);
+                broadcast(encode_endpoint(ep->second));
+            }
+            it = pending_mute.erase(it);
+        }
+    }
+
     void set_panic(bool on) {
         if (on) {
-            for (auto& [id, e] : endpoints) {
-                if (e.muted || panic_muted.count(id)) continue;
-                s.backend_.set_endpoint_mute(id, true);
+            std::vector<std::string> ids;
+            for (auto& [id, e] : endpoints)
+                if (!e.muted && !panic_muted.count(id)) ids.push_back(id);
+            for (const std::string& id : ids) {
                 panic_muted.insert(id);
+                request_mute(id, true);
             }
-            panic_at = Clock::now();
         } else {
-            for (const std::string& id : panic_muted) {
-                auto it = endpoints.find(id);
-                if (it != endpoints.end() && it->second.muted) s.backend_.set_endpoint_mute(id, false);
-            }
+            const std::set<std::string> ours = std::move(panic_muted);
             panic_muted.clear();
+            for (const std::string& id : ours) {
+                auto it = endpoints.find(id);
+                if (it != endpoints.end() && it->second.muted) request_mute(id, false);
+            }
         }
         if (panic == on) return;
         panic = on;
@@ -453,7 +572,7 @@ struct Server::Impl {
                 if (decode_set_volume(r, id, vol)) s.backend_.set_endpoint_volume(id, vol);
                 return;
             case MsgType::SetEndpointMute:
-                if (decode_set_mute(r, id, muted)) s.backend_.set_endpoint_mute(id, muted);
+                if (decode_set_mute(r, id, muted)) request_mute(id, muted);
                 return;
             case MsgType::SetSourceVolume:
                 if (decode_set_volume(r, id, vol)) s.backend_.set_source_volume(id, vol);
@@ -490,6 +609,14 @@ struct Server::Impl {
                 if (decode_flag(r, on)) set_panic(on);
                 return;
             }
+            case MsgType::StreamStart: {
+                StreamStart req;
+                if (decode_stream_start(r, req)) start_stream(c, req);
+                return;
+            }
+            case MsgType::StreamStop:
+                end_stream(c, ErrorCode::None, true);
+                return;
             default:
                 return;  // unknown: ignore (forward compatibility)
         }
@@ -668,6 +795,7 @@ struct Server::Impl {
                 continue;
             }
             finish_pairing(c, false);
+            end_stream(c, ErrorCode::ConnectionLost, false);  // the phone is gone: stop sending
             net::close_socket(c.fd);
             it = conns.erase(it);
         }
@@ -717,6 +845,7 @@ struct Server::Impl {
                 if (!c.dead && it.readable) read_conn(c, now);
             }
             check_timeouts(now);
+            expire_pending_mutes(now);
             for (auto& [id, c] : conns)
                 if (!c->dead && c->out_pos < c->out.size()) flush_conn(*c);
             reap();
@@ -766,6 +895,16 @@ bool Server::start(std::string* err) {
 
 void Server::stop() {
     if (!impl_) return;
+    // End streams first, while the backend can still undo "mute the PC".
+    if (running_ && active_streams_ > 0) {
+        auto done = std::make_shared<std::promise<void>>();
+        auto fut = done->get_future();
+        post([this, done] {
+            for (auto& [id, c] : impl_->conns) impl_->end_stream(*c, ErrorCode::None, false);
+            done->set_value();
+        });
+        fut.wait_for(std::chrono::seconds(1));
+    }
     backend_.stop();  // no new OS callbacks after this
     {
         std::lock_guard<std::mutex> lk(impl_->icon_mu);
@@ -816,8 +955,19 @@ void Server::revoke(const Id16& controller_id) {
     });
 }
 
+void Server::stream_failed(uint64_t stream_id, ErrorCode reason) {
+    post([this, stream_id, reason] {
+        auto it = impl_->conns.find(stream_id);
+        if (it != impl_->conns.end()) impl_->end_stream(*it->second, reason, true);
+    });
+}
+
 void Server::panic_mute(bool on) {
     post([this, on] { impl_->set_panic(on); });
+}
+
+void Server::panic_toggle() {
+    post([this] { impl_->set_panic(!impl_->panic); });
 }
 
 void Server::reset_pairing_lockout() {
@@ -836,18 +986,35 @@ void Server::endpoint_upsert(const EndpointInfo& e) {
     post([this, e = EndpointInfo(e)]() mutable {
         e.meter = impl_->slot_for(e.id);
         auto it = impl_->endpoints.find(e.id);
-        if (it != impl_->endpoints.end() && it->second == e) return;
-        // Unmuted by hand during a panic: forget it (PANIC_MUTE 0 must not touch
-        // it again). Reports racing our own mute right after the panic are ignored.
-        if (!e.muted && impl_->panic_muted.count(e.id) && Clock::now() - impl_->panic_at > std::chrono::seconds(1))
-            impl_->panic_muted.erase(e.id);
+        const bool is_new = it == impl_->endpoints.end();
+        // A report older than a mute we asked for must not undo it in our model.
+        auto pm = impl_->pending_mute.find(e.id);
+        if (pm != impl_->pending_mute.end()) {
+            if (e.muted != pm->second.muted && Clock::now() < pm->second.until) {
+                pm->second.reported = e.muted;  // applied when the request expires unconfirmed
+                e.muted = pm->second.muted;
+            } else {
+                impl_->pending_mute.erase(pm);
+            }
+        }
+        if (!is_new && it->second == e) return;
+        // Unmuted by hand during a panic: forget it (PANIC_MUTE 0 must not touch it again).
+        if (!e.muted && impl_->panic_muted.count(e.id)) impl_->panic_muted.erase(e.id);
         impl_->endpoints[e.id] = e;
         impl_->broadcast(encode_endpoint(e));
+        // A device plugged in during a panic is muted too.
+        if (is_new && impl_->panic && !e.muted) {
+            impl_->panic_muted.insert(e.id);
+            impl_->request_mute(e.id, true);
+        }
     });
 }
 
 void Server::endpoint_removed(const std::string& id) {
     post([this, id] {
+        impl_->pending_mute.erase(id);
+        for (auto& [cid, c] : impl_->conns)
+            if (c->streaming && c->stream_endpoint == id) impl_->end_stream(*c, ErrorCode::ConnectionLost, true);
         impl_->free_slot(id);
         if (impl_->endpoints.erase(id) == 0) return;
         impl_->broadcast(encode_id(MsgType::EndpointRemoved, id));

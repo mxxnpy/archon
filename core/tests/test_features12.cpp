@@ -2,6 +2,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -364,4 +366,184 @@ TEST(v12_panic_requested_before_the_link_is_up_is_sent_once) {
     std::this_thread::sleep_for(200ms);
     CHECK(!rig.be.muted("OUT1"));
     CHECK(rig.obs.changes.load() == changes + 1);
+}
+
+namespace {
+
+// Like the real backend: requests are applied later, in order, on one worker
+// thread (the WASAPI backend posts them to its COM thread).
+class AsyncBackend : public AudioBackend {
+public:
+    std::mutex mu;
+    AudioSink* sink = nullptr;
+    std::map<std::string, EndpointInfo> eps;
+
+    AsyncBackend() {
+        eps["OUT1"] = EndpointInfo{"OUT1", "Speakers", 5000, false, true};
+        EndpointInfo mic{"MIC1", "Microphone", 7000, false, false};
+        mic.input = true;
+        eps["MIC1"] = mic;
+        worker_ = std::thread([this] {
+            std::unique_lock<std::mutex> lk(qmu_);
+            for (;;) {
+                qcv_.wait(lk, [&] { return quit_ || !queue_.empty(); });
+                if (queue_.empty()) return;
+                auto job = queue_.front();
+                queue_.pop_front();
+                lk.unlock();
+                std::this_thread::sleep_for(40ms);
+                user_set_mute(job.first, job.second);
+                lk.lock();
+            }
+        });
+    }
+    ~AsyncBackend() override {
+        {
+            std::lock_guard<std::mutex> lk(qmu_);
+            quit_ = true;
+        }
+        qcv_.notify_all();
+        worker_.join();
+    }
+    bool start(AudioSink& snk, std::string*) override {
+        std::lock_guard<std::mutex> lk(mu);
+        sink = &snk;
+        for (auto& [id, e] : eps) sink->endpoint_upsert(e);
+        return true;
+    }
+    void stop() override {
+        std::lock_guard<std::mutex> lk(mu);
+        sink = nullptr;
+    }
+    void set_endpoint_volume(const std::string&, uint16_t) override {}
+    void set_endpoint_mute(const std::string& id, bool m) override {
+        {
+            std::lock_guard<std::mutex> lk(qmu_);
+            queue_.emplace_back(id, m);
+        }
+        qcv_.notify_one();
+    }
+    void set_source_volume(const std::string&, uint16_t) override {}
+    void set_source_mute(const std::string&, bool) override {}
+    bool icon_png(const std::string&, Bytes&) override { return false; }
+    std::mutex qmu_;
+    std::condition_variable qcv_;
+    std::deque<std::pair<std::string, bool>> queue_;
+    bool quit_ = false;
+    std::thread worker_;
+    // A change made on the PC itself (or the OS applying a request): reported at once.
+    void user_set_mute(const std::string& id, bool m) {
+        std::lock_guard<std::mutex> lk(mu);
+        auto it = eps.find(id);
+        if (it == eps.end()) return;
+        it->second.muted = m;
+        if (sink) sink->endpoint_upsert(it->second);
+    }
+    void plug(const EndpointInfo& e) {
+        std::lock_guard<std::mutex> lk(mu);
+        eps[e.id] = e;
+        if (sink) sink->endpoint_upsert(e);
+    }
+    bool muted(const std::string& id) {
+        std::lock_guard<std::mutex> lk(mu);
+        return eps[id].muted;
+    }
+};
+
+struct AsyncRig {
+    AsyncBackend be;
+    Store store;
+    Obs obs;
+    ServerConfig cfg;
+    std::unique_ptr<Server> srv;
+    bool started = false;
+    AsyncRig() {
+        cfg.agent_id = random_array<16>();
+        cfg.agent_name = "PC";
+        cfg.loopback_only = true;
+        cfg.port = 0;
+        srv = std::make_unique<Server>(cfg, be, store, obs);
+        std::string err;
+        started = srv->start(&err);
+    }
+    ~AsyncRig() { srv->stop(); }
+    // The privacy invariant: the panic flag never claims "muted" with a live device.
+    bool consistent() {
+        const bool p = obs.panic.load();
+        const bool all = be.muted("OUT1") && be.muted("MIC1");
+        const bool none = !be.muted("OUT1") && !be.muted("MIC1");
+        return p ? all : none;
+    }
+};
+
+}  // namespace
+
+TEST(v12_panic_quick_toggles_stay_consistent_with_async_os) {
+    AsyncRig rig;
+    REQUIRE(rig.started);
+    for (int round = 0; round < 3; ++round) {
+        rig.srv->panic_mute(true);
+        rig.srv->panic_mute(false);  // right after: the model must stay coherent
+        std::this_thread::sleep_for(400ms);
+        CHECK(rig.consistent());
+        rig.srv->panic_toggle();
+        rig.srv->panic_toggle();
+        std::this_thread::sleep_for(400ms);
+        CHECK(rig.consistent());
+    }
+    rig.srv->panic_mute(false);
+    CHECK(eventually([&] { return !rig.obs.panic.load() && rig.consistent(); }));
+}
+
+TEST(v12_panic_keeps_a_mute_requested_just_before_it) {
+    AsyncRig rig;
+    REQUIRE(rig.started);
+    Listener l;
+    PairedController pc;
+    pc.id = random_array<16>();
+    pc.name = "phone";
+    pc.key = random_array<32>();
+    rig.store.put(pc);
+    PairingRecord rec{rig.cfg.agent_id, "PC", pc.key};
+    Client c(pc.id, "phone", l, quick());
+    c.resume("127.0.0.1", rig.srv->port(), rec);
+    REQUIRE(eventually([&] {
+        std::lock_guard<std::mutex> lk(l.mu);
+        return l.status == ClientStatus::Connected && l.infos > 0;
+    }));
+    c.set_endpoint_mute("MIC1", true);  // the user mutes the mic...
+    std::this_thread::sleep_for(10ms);   // ...and panics before the OS applied it
+    rig.srv->panic_mute(true);
+    REQUIRE(eventually([&] { return rig.be.muted("OUT1") && rig.be.muted("MIC1"); }));
+    std::this_thread::sleep_for(300ms);
+    rig.srv->panic_mute(false);
+    CHECK(eventually([&] { return !rig.be.muted("OUT1"); }));
+    std::this_thread::sleep_for(200ms);
+    CHECK(rig.be.muted("MIC1"));  // the user's own mute survives the panic
+}
+
+TEST(v12_panic_mutes_a_device_plugged_in_during_it) {
+    AsyncRig rig;
+    REQUIRE(rig.started);
+    rig.srv->panic_mute(true);
+    REQUIRE(eventually([&] { return rig.be.muted("OUT1") && rig.be.muted("MIC1"); }));
+    EndpointInfo usb{"USB1", "USB headset", 6000, false, false};
+    rig.be.plug(usb);
+    CHECK(eventually([&] { return rig.be.muted("USB1"); }));
+    std::this_thread::sleep_for(300ms);
+    rig.srv->panic_mute(false);
+    CHECK(eventually([&] { return !rig.be.muted("USB1") && !rig.be.muted("OUT1") && !rig.be.muted("MIC1"); }));
+}
+
+TEST(v12_hand_unmute_inside_the_echo_window_is_respected) {
+    AsyncRig rig;
+    REQUIRE(rig.started);
+    rig.srv->panic_mute(true);
+    REQUIRE(eventually([&] { return rig.be.muted("MIC1"); }));
+    rig.be.user_set_mute("MIC1", false);  // unmuted on the PC right away (inside the 1 s window)
+    std::this_thread::sleep_for(1500ms);  // the held-back report is applied when the request expires
+    rig.srv->panic_mute(false);
+    CHECK(eventually([&] { return !rig.be.muted("OUT1"); }));
+    std::this_thread::sleep_for(200ms);
+    CHECK(!rig.be.muted("MIC1"));
 }

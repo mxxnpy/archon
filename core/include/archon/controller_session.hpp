@@ -26,6 +26,7 @@ struct ControllerEvent {
         Pong,
         Meters,          // levels for meter slots (see EndpointInfo/SourceInfo::meter)
         AgentInfo,       // 1.2: features the agent supports, panic state
+        StreamState,     // 1.3: listening on the phone started/stopped
         Error,           // agent reported an error; connection will close
     };
     ControllerEvent(Kind k = Kind::Error) : kind(k) {}  // NOLINT: implicit for brace-init
@@ -40,6 +41,7 @@ struct ControllerEvent {
     PairingRecord pairing;
     std::vector<MeterLevel> meters;
     arc::AgentInfo agent;  // AgentInfo
+    arc::StreamState stream;  // StreamState
 };
 
 class ControllerSession {

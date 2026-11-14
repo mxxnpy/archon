@@ -41,6 +41,8 @@ enum class MsgType : uint8_t {
     SetMeters = 0x27,
     SetSourceRoute = 0x28,  // 1.2
     PanicMute = 0x29,       // 1.2
+    StreamStart = 0x2A,     // 1.3
+    StreamStop = 0x2B,      // 1.3
 
     StateReset = 0x40,
     Endpoint = 0x41,
@@ -52,6 +54,7 @@ enum class MsgType : uint8_t {
     Pong = 0x47,
     Meters = 0x48,
     AgentInfo = 0x49,  // 1.2
+    StreamState = 0x4A,  // 1.3
 };
 
 enum class Mode : uint8_t { Pair = 1, Resume = 2 };
@@ -185,7 +188,45 @@ enum AgentFeature : uint32_t {
     kFeatureInputs = 1u << 0,
     kFeatureRouting = 1u << 1,
     kFeaturePanic = 1u << 2,
+    kFeatureStream = 1u << 3,  // 1.3: listen to the PC on the phone
 };
+
+// ---- 1.3: listening on the phone ------------------------------------------------
+
+constexpr uint8_t kStreamCodecOpus = 1;
+constexpr uint8_t kStreamFlagMutePc = 1;
+
+struct StreamStart {
+    uint16_t udp_port = 0;
+    uint8_t flags = 0;
+    std::string endpoint_id;  // empty = default output
+};
+
+struct StreamState {
+    bool active = false;
+    uint8_t codec = 0;
+    uint32_t sample_rate = 0;
+    uint8_t channels = 0;
+    uint16_t frame_ms = 0;
+    Key32 key{};
+    uint16_t error = 0;  // ErrorCode when it stopped for a reason
+};
+
+Bytes encode_stream_start(const StreamStart& s);
+bool decode_stream_start(Reader& r, StreamStart& s);
+Bytes encode_stream_state(const StreamState& s);
+bool decode_stream_state(Reader& r, StreamState& s);
+
+// One UDP datagram of the audio stream: 16-byte header (associated data) +
+// XChaCha20-Poly1305(key, nonce = seq LE || "ARC1S" || 0...) over the payload.
+constexpr size_t kAudioHeader = 16;
+constexpr size_t kMaxAudioPayload = 1275;  // Opus maximum packet
+Bytes seal_audio(const Key32& key, uint64_t seq, uint32_t timestamp, uint8_t codec, const uint8_t* payload,
+                 size_t n);
+// False on a bad header, wrong version or failed authentication.
+bool open_audio(const Key32& key, const uint8_t* datagram, size_t n, uint64_t& seq, uint32_t& timestamp,
+                uint8_t& codec, Bytes& payload);
+
 constexpr size_t kMaxOsName = 32;
 struct AgentInfo {
     uint32_t features = 0;

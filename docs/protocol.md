@@ -269,9 +269,42 @@ Volumes are `u16` in **0..10000** (0.00 % – 100.00 %). Ids are opaque strings
   | 0 | input devices (microphones) |
   | 1 | per-app output routing |
   | 2 | panic mute |
+  | 3 | listening on the phone (1.3) |
 
   Controllers hide what the agent does not support. A 1.1 agent never sends
   AGENT_INFO: treat that as features = 0.
+
+### Listening on the phone (added in 1.3, backward compatible)
+
+The phone can play what the PC plays (no Bluetooth adapter needed on the PC).
+Feature bit 3 in AGENT_INFO announces it.
+
+| Type | Dir | Name | Body |
+| --- | --- | --- | --- |
+| `0x2A` | C→A | STREAM_START | `u16 udp_port` (where the phone listens), `u8 flags` (bit0 mute the PC's output while streaming), `str endpoint_id` (output to capture; empty = default output) |
+| `0x2B` | C→A | STREAM_STOP | — |
+| `0x4A` | A→C | STREAM_STATE | `u8 active`, `u8 codec` (1 = Opus), `u32 sample_rate`, `u8 channels`, `u16 frame_ms`, `key[32]` (all zero when inactive), `u16 error` (0 or an error code) |
+
+* The agent captures the output's final mix (Windows: WASAPI loopback) and
+  encodes it with **Opus** (48 kHz, stereo, 20 ms frames, ~128 kbit/s,
+  restricted low-delay mode). Controllers decode with the platform decoder.
+* Audio travels over **UDP** from the agent to the controller's address (the
+  TCP peer address) and `udp_port`. Each datagram:
+  `u8 version=1`, `u8 codec`, `u16 reserved=0`, `u64 seq` (starts at 0, +1 per
+  frame, never repeats under one key), `u32 timestamp` (in samples) — the 16-byte
+  header is the associated data — then XChaCha20-Poly1305 with the stream key
+  over the Opus packet: `mac[16] || ciphertext`. Nonce = `seq` as u64
+  little-endian in the first 8 bytes, then the ASCII `ARC1S` and zeros.
+* The **stream key is fresh random** for every STREAM_START and travels only
+  inside the encrypted channel (STREAM_STATE), so nobody else on the network can
+  listen or inject audio. Datagrams that fail authentication, repeat a `seq`, or
+  arrive more than 1 s late are dropped.
+* One stream per controller and at most 2 streams per agent (Busy beyond). The
+  stream stops on STREAM_STOP, when the controller's link closes, or when the
+  captured output disappears; the agent then sends STREAM_STATE with active = 0
+  (and `error` when it stopped for a reason). "Mute the PC while streaming"
+  is undone when the stream ends.
+* Controllers keep a small jitter buffer (target ≈ 60 ms) and conceal gaps.
 
 ### Level meters (added in 1.1, backward compatible)
 

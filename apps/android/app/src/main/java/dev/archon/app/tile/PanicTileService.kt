@@ -34,12 +34,22 @@ class PanicTileService : TileService() {
         }
     }
 
-    override fun onClick() {
+    override fun onClick() = toggle(allowUnmute = !isLocked)
+
+    private fun toggle(allowUnmute: Boolean) {
         val tile = qsTile ?: return
         tile.state = Tile.STATE_UNAVAILABLE  // working
         tile.updateTile()
         Thread {
-            val result = PanicToggle.run(applicationContext)
+            val result = PanicToggle.run(applicationContext, allowUnmute)
+            if (result == PanicToggle.Result.NEEDS_UNLOCK) {
+                // Turning the PC's microphone back on must not work from a locked phone.
+                main.post {
+                    qsTile?.apply { state = Tile.STATE_ACTIVE; updateTile() }
+                    unlockAndRun { toggle(allowUnmute = true) }
+                }
+                return@Thread
+            }
             main.post {
                 qsTile?.apply {
                     state = if (result == PanicToggle.Result.MUTED) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
@@ -49,7 +59,8 @@ class PanicTileService : TileService() {
                     PanicToggle.Result.MUTED -> R.string.tile_muted
                     PanicToggle.Result.UNMUTED -> R.string.tile_unmuted
                     PanicToggle.Result.NO_PC -> R.string.tile_no_pc
-                    PanicToggle.Result.FAILED -> R.string.tile_failed
+                    PanicToggle.Result.UNSUPPORTED -> R.string.tile_unsupported
+                    PanicToggle.Result.FAILED, PanicToggle.Result.NEEDS_UNLOCK -> R.string.tile_failed
                 }
                 Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
             }
@@ -57,29 +68,42 @@ class PanicTileService : TileService() {
     }
 }
 
-/** One short connection: resume, read the panic state, send the opposite, disconnect. */
+/**
+ * One short connection: resume, read the panic state, send the opposite, and
+ * report success only when the PC confirms it (AGENT_INFO). Unmuting needs
+ * [allowUnmute] (an unlocked phone).
+ */
 object PanicToggle {
-    enum class Result { MUTED, UNMUTED, NO_PC, FAILED }
+    enum class Result { MUTED, UNMUTED, NO_PC, FAILED, UNSUPPORTED, NEEDS_UNLOCK }
 
-    fun run(ctx: Context): Result {
+    fun run(ctx: Context, allowUnmute: Boolean): Result {
         val store = PairingStore(ctx)
         val pcs = store.all()
         if (pcs.isEmpty()) return Result.NO_PC
         val pc = pcs.firstOrNull { it.agentId == store.lastPc } ?: pcs.first()
         val done = CountDownLatch(1)
-        val sent = AtomicBoolean(false)
+        val want = AtomicReference<Boolean?>(null)  // decided from the first AGENT_INFO
         val result = AtomicReference(Result.FAILED)
         lateinit var client: NativeClient
         client = NativeClient(store.controllerId, deviceName(ctx)) { e ->
             when (e.type) {
-                CoreEvent.AGENT_INFO -> if (sent.compareAndSet(false, true)) {
-                    val on = !e.panic
-                    client.panicMute(on)  // channel is up: sent right away
-                    result.set(if (on) Result.MUTED else Result.UNMUTED)
-                    Thread {
-                        Thread.sleep(500)  // let the command leave before closing
+                CoreEvent.AGENT_INFO -> {
+                    if (e.features and NativeClient.FEATURE_PANIC == 0) {
+                        result.set(Result.UNSUPPORTED); done.countDown(); return@NativeClient
+                    }
+                    val target = want.get()
+                    if (target == null) {
+                        val on = !e.panic
+                        if (!on && !allowUnmute) {
+                            result.set(Result.NEEDS_UNLOCK); done.countDown(); return@NativeClient
+                        }
+                        want.set(on)
+                        client.panicMute(on)  // channel is up: sent right away
+                    } else if (e.panic == target) {
+                        // Confirmed by the PC.
+                        result.set(if (target) Result.MUTED else Result.UNMUTED)
                         done.countDown()
-                    }.start()
+                    }
                 }
                 CoreEvent.STATUS -> if (LinkStatus.of(e.status) == LinkStatus.FAILED) done.countDown()
             }
@@ -90,7 +114,7 @@ object PanicToggle {
         } finally {
             client.close()  // joins the network thread: never called from it
         }
-        return if (sent.get()) result.get() else Result.FAILED
+        return result.get()
     }
 
     private fun deviceName(ctx: Context): String =

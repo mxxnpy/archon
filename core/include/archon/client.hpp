@@ -4,12 +4,15 @@
 // volume commands (slider drags) so only the latest value is sent.
 
 #include <atomic>
+#include <chrono>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
 
 #include "archon/controller_session.hpp"
+#include "archon/stream.hpp"
 #include "archon/net.hpp"
 
 namespace arc {
@@ -32,6 +35,14 @@ public:
     virtual ~ClientListener() = default;
     virtual void on_status(ClientStatus status, ErrorCode error, const std::string& message) = 0;
     virtual void on_event(const ControllerEvent& event) = 0;
+    // 1.3: one Opus packet of the PC's audio, in order (network thread).
+    // lost = true, empty packet: that frame never arrived (conceal it).
+    virtual void on_audio(const uint8_t* packet, size_t n, uint64_t seq, bool lost) {
+        (void)packet;
+        (void)n;
+        (void)seq;
+        (void)lost;
+    }
 };
 
 struct ClientTiming {
@@ -73,6 +84,10 @@ public:
     // while offline: the last request is sent once, as soon as the secure
     // channel is up (a shortcut calls resume() then panic_mute()).
     void panic_mute(bool on);
+    // 1.3: listen to the PC on this phone. Needs a live link; returns false
+    // otherwise or if no UDP port could be opened. flags: kStreamFlagMutePc.
+    bool stream_start(uint8_t flags, const std::string& endpoint_id = {});
+    void stream_stop();
     void request_icon(const std::string& icon_key);
     void refresh();
     // Subscribe to live level meters (kept across reconnects).
@@ -103,6 +118,18 @@ private:
     std::atomic<bool> meters_{false};
     std::atomic<bool> live_{false};  // secure channel up: commands are accepted only then
     std::optional<bool> pending_panic_;  // guarded by mu_: panic requested before the link was up
+    std::chrono::steady_clock::time_point pending_panic_at_{};  // guarded by mu_
+
+    // 1.3: audio receiver (opened on first stream_start, closed in the destructor).
+    struct AudioRelay : StreamListener {
+        ClientListener* target = nullptr;
+        void on_audio(const uint8_t* p, size_t n, uint64_t seq, bool lost) override {
+            if (target) target->on_audio(p, n, seq, lost);
+        }
+    };
+    AudioRelay relay_;
+    std::unique_ptr<StreamReceiver> receiver_;
+    std::mutex receiver_mu_;
 
     // Connection parameters (owned by the worker while it runs).
     std::vector<std::pair<std::string, uint16_t>> addrs_;

@@ -374,7 +374,7 @@ void AgentUi::show_menu() {
             if (server_) server_->reset_pairing_lockout();
             break;
         case ID_PANIC:
-            if (server_) server_->panic_mute(!panic_);
+            if (server_) server_->panic_toggle();
             break;
         case ID_EXIT: PostQuitMessage(0); break;
         default: break;
@@ -411,7 +411,7 @@ LRESULT AgentUi::handle_main(HWND h, UINT m, WPARAM w, LPARAM l) {
             show_devices();
             return 0;
         case WM_HOTKEY:
-            if (w == kPanicHotkey && server_) server_->panic_mute(!panic_);
+            if (w == kPanicHotkey && server_) server_->panic_toggle();
             return 0;
         case WM_APP_PANIC:
             panic_ = w != 0;

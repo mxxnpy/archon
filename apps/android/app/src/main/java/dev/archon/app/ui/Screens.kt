@@ -574,7 +574,8 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
                 contentAlignment = Alignment.Center,
             ) { Dot(dotColor) }
             if (link.canPanic) {
-                IconButton(onClick = { vm.togglePanic() }) {
+                // Never queue a stale toggle while the link is down.
+                IconButton(onClick = { vm.togglePanic() }, enabled = link.status == LinkStatus.CONNECTED) {
                     Icon(Glyphs.Panic,
                         contentDescription = stringResource(if (link.panic) R.string.panic_off else R.string.panic_on),
                         tint = if (link.panic) Archon.Error else Archon.Paper)

@@ -33,6 +33,18 @@ constexpr long kIoError = -1;
 long send_some(socket_t s, const uint8_t* p, size_t n);
 long recv_some(socket_t s, uint8_t* p, size_t n);
 
+// ---- UDP (1.3 audio stream) ------------------------------------------------------
+// Bound on all interfaces, IPv6 dual-stack when available (else IPv4);
+// non-blocking. port 0 picks an ephemeral port.
+socket_t bind_udp(uint16_t port, uint16_t* bound_port, std::string* err);
+// One datagram to a numeric host (IPv4, IPv6 or "::ffff:a.b.c.d"). False on error.
+bool send_udp(socket_t s, const std::string& host, uint16_t port, const uint8_t* p, size_t n);
+// One datagram: >0 bytes, kWouldBlock or kIoError. *from = numeric source host,
+// with IPv4-mapped IPv6 reduced to plain IPv4.
+long recv_udp(socket_t s, uint8_t* p, size_t n, std::string* from);
+// "::ffff:192.168.0.5" -> "192.168.0.5"; anything else unchanged.
+std::string unmap_ipv4(const std::string& host);
+
 struct PollItem {
     socket_t fd;
     bool want_read;

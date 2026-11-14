@@ -143,6 +143,118 @@ socket_t listen_tcp(uint16_t port, bool loopback_only, uint16_t* bound_port, std
     return s;
 }
 
+std::string unmap_ipv4(const std::string& host) {
+    static const char kMapped[] = "::ffff:";
+    if (host.size() > 7 && (host.compare(0, 7, kMapped) == 0 || host.compare(0, 7, "::FFFF:") == 0) &&
+        host.find('.') != std::string::npos)
+        return host.substr(7);
+    return host;
+}
+
+socket_t bind_udp(uint16_t port, uint16_t* bound_port, std::string* err) {
+    init();
+    socket_t s = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    const bool v6 = s != kInvalidSocket;
+    if (v6) {
+        int off = 0;
+        setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&off), sizeof off);
+    } else {
+        s = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (s == kInvalidSocket) {
+            if (err) *err = describe_error("socket");
+            return kInvalidSocket;
+        }
+    }
+    int rc;
+    if (v6) {
+        sockaddr_in6 a{};
+        a.sin6_family = AF_INET6;
+        a.sin6_port = htons(port);
+        a.sin6_addr = in6addr_any;
+        rc = ::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a);
+    } else {
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_port = htons(port);
+        a.sin_addr.s_addr = htonl(INADDR_ANY);
+        rc = ::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof a);
+    }
+    if (rc != 0) {
+        if (err) *err = describe_error("bind udp");
+        close_socket(s);
+        return kInvalidSocket;
+    }
+    // Room for a burst of audio datagrams while the reader thread is late.
+    int rcvbuf = 256 * 1024;
+    setsockopt(s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&rcvbuf), sizeof rcvbuf);
+    if (bound_port) {
+        sockaddr_storage ss{};
+        socklen_t len = sizeof ss;
+        getsockname(s, reinterpret_cast<sockaddr*>(&ss), &len);
+        *bound_port = ss.ss_family == AF_INET6 ? ntohs(reinterpret_cast<sockaddr_in6*>(&ss)->sin6_port)
+                                               : ntohs(reinterpret_cast<sockaddr_in*>(&ss)->sin_port);
+    }
+    set_nonblocking(s, true);
+    return s;
+}
+
+bool send_udp(socket_t s, const std::string& host, uint16_t port, const uint8_t* p, size_t n) {
+    sockaddr_storage local{};
+    socklen_t llen = sizeof local;
+    if (getsockname(s, reinterpret_cast<sockaddr*>(&local), &llen) != 0) return false;
+    const std::string plain = unmap_ipv4(host);
+    sockaddr_storage to{};
+    socklen_t tolen = 0;
+    in_addr v4{};
+    in6_addr v6{};
+    std::string h6 = plain;
+    const size_t pct = h6.find('%');  // scope ids are not routable here
+    if (pct != std::string::npos) h6.resize(pct);
+    if (inet_pton(AF_INET, plain.c_str(), &v4) == 1) {
+        if (local.ss_family == AF_INET6) {  // dual-stack socket: IPv4-mapped destination
+            auto* a = reinterpret_cast<sockaddr_in6*>(&to);
+            a->sin6_family = AF_INET6;
+            a->sin6_port = htons(port);
+            a->sin6_addr.s6_addr[10] = 0xff;
+            a->sin6_addr.s6_addr[11] = 0xff;
+            std::memcpy(&a->sin6_addr.s6_addr[12], &v4, 4);
+            tolen = sizeof(sockaddr_in6);
+        } else {
+            auto* a = reinterpret_cast<sockaddr_in*>(&to);
+            a->sin_family = AF_INET;
+            a->sin_port = htons(port);
+            a->sin_addr = v4;
+            tolen = sizeof(sockaddr_in);
+        }
+    } else if (local.ss_family == AF_INET6 && inet_pton(AF_INET6, h6.c_str(), &v6) == 1) {
+        auto* a = reinterpret_cast<sockaddr_in6*>(&to);
+        a->sin6_family = AF_INET6;
+        a->sin6_port = htons(port);
+        a->sin6_addr = v6;
+        tolen = sizeof(sockaddr_in6);
+    } else {
+        return false;
+    }
+    const int r = ::sendto(s, reinterpret_cast<const char*>(p), static_cast<int>(n), 0,
+                           reinterpret_cast<sockaddr*>(&to), tolen);
+    return r == static_cast<int>(n);
+}
+
+long recv_udp(socket_t s, uint8_t* p, size_t n, std::string* from) {
+    sockaddr_storage ss{};
+    socklen_t len = sizeof ss;
+    const int r = ::recvfrom(s, reinterpret_cast<char*>(p), static_cast<int>(n), 0, reinterpret_cast<sockaddr*>(&ss), &len);
+    if (r < 0) return would_block(last_error()) ? kWouldBlock : kIoError;
+    if (from) {
+        char host[NI_MAXHOST] = {0};
+        if (getnameinfo(reinterpret_cast<sockaddr*>(&ss), len, host, sizeof host, nullptr, 0, NI_NUMERICHOST) == 0)
+            *from = unmap_ipv4(host);
+        else
+            from->clear();
+    }
+    return r;
+}
+
 socket_t accept_tcp(socket_t listener, std::string* peer) {
     sockaddr_storage ss{};
     socklen_t len = sizeof ss;

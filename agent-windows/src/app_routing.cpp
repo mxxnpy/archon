@@ -48,6 +48,31 @@ const IID kIidDownlevel = {0x2a59116d, 0x6c4f, 0x45e0, {0xa7, 0x4f, 0x70, 0x7e, 
 
 IAudioPolicyConfigFactory* as_factory(void* p) { return static_cast<IAudioPolicyConfigFactory*>(p); }
 
+// Windows 10 1803 (build 17134) introduced per-app output devices.
+bool build_supports_routing() {
+    using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    auto fn = ntdll ? reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion")) : nullptr;
+    OSVERSIONINFOW v{sizeof v};
+    if (!fn || fn(&v) != 0) return false;
+    return v.dwMajorVersion > 10 || (v.dwMajorVersion == 10 && v.dwBuildNumber >= 17134);
+}
+
+// One harmless read through the hand-written vtable, guarded by SEH: if a
+// future Windows changed the layout we disable routing instead of crashing.
+// (No C++ objects here: __try needs a frame without unwinding.)
+bool probe_layout(IAudioPolicyConfigFactory* f) {
+    HSTRING dev = nullptr;
+    HRESULT hr = E_FAIL;
+    __try {
+        hr = f->GetPersistedDefaultAudioEndpoint(GetCurrentProcessId(), eRender, eMultimedia, &dev);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    if (dev) WindowsDeleteString(dev);
+    return SUCCEEDED(hr) || hr == E_INVALIDARG || hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+}
+
 }  // namespace
 
 std::wstring routing_device_path(const std::wstring& endpoint_id) {
@@ -63,14 +88,18 @@ std::wstring routing_endpoint_id(const std::wstring& path) {
 }
 
 AppRouting::AppRouting() {
+    if (!build_supports_routing()) return;
     const wchar_t cls[] = L"Windows.Media.Internal.AudioPolicyConfig";
     HSTRING name = nullptr;
     if (FAILED(WindowsCreateString(cls, UINT32(wcslen(cls)), &name))) return;
     for (const IID* iid : {&kIidCurrent, &kIidDownlevel}) {
         void* f = nullptr;
         if (SUCCEEDED(RoGetActivationFactory(name, *iid, &f)) && f) {
-            factory_ = f;
-            break;
+            if (probe_layout(as_factory(f))) {
+                factory_ = f;
+                break;
+            }
+            as_factory(f)->Release();  // unexpected layout: no routing on this build
         }
     }
     WindowsDeleteString(name);

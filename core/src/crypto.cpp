@@ -2,8 +2,10 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "monocypher.h"
+#include "archon/protocol.hpp"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -22,6 +24,53 @@
 #endif
 
 namespace arc {
+
+namespace {
+void audio_nonce(uint64_t seq, uint8_t nonce[24]) {
+    std::memset(nonce, 0, 24);
+    for (int i = 0; i < 8; ++i) nonce[i] = uint8_t(seq >> (8 * i));
+    std::memcpy(nonce + 8, "ARC1S", 5);
+}
+void audio_header(uint64_t seq, uint32_t ts, uint8_t codec, uint8_t h[16]) {
+    h[0] = 1;  // version
+    h[1] = codec;
+    h[2] = h[3] = 0;
+    for (int i = 0; i < 8; ++i) h[4 + i] = uint8_t(seq >> (56 - 8 * i));  // big-endian like the rest of the wire
+    for (int i = 0; i < 4; ++i) h[12 + i] = uint8_t(ts >> (24 - 8 * i));
+}
+}  // namespace
+
+Bytes seal_audio(const Key32& key, uint64_t seq, uint32_t timestamp, uint8_t codec, const uint8_t* payload, size_t n) {
+    if (n > kMaxAudioPayload) n = 0;
+    Bytes out(kAudioHeader + 16 + n);
+    audio_header(seq, timestamp, codec, out.data());
+    uint8_t nonce[24];
+    audio_nonce(seq, nonce);
+    crypto_aead_lock(out.data() + kAudioHeader + 16, out.data() + kAudioHeader, key.data(), nonce, out.data(),
+                     kAudioHeader, payload, n);
+    return out;
+}
+
+bool open_audio(const Key32& key, const uint8_t* d, size_t n, uint64_t& seq, uint32_t& timestamp, uint8_t& codec,
+                Bytes& payload) {
+    if (n < kAudioHeader + 16 || n > kAudioHeader + 16 + kMaxAudioPayload || d[0] != 1 || d[2] || d[3]) return false;
+    uint64_t s = 0;
+    for (int i = 0; i < 8; ++i) s = (s << 8) | d[4 + i];
+    uint32_t t = 0;
+    for (int i = 0; i < 4; ++i) t = (t << 8) | d[12 + i];
+    uint8_t nonce[24];
+    audio_nonce(s, nonce);
+    payload.assign(n - kAudioHeader - 16, 0);
+    if (crypto_aead_unlock(payload.data(), d + kAudioHeader, key.data(), nonce, d, kAudioHeader,
+                           d + kAudioHeader + 16, payload.size()) != 0) {
+        payload.clear();
+        return false;
+    }
+    seq = s;
+    timestamp = t;
+    codec = d[1];
+    return true;
+}
 
 void random_bytes(uint8_t* out, size_t n) {
 #if defined(_WIN32)

@@ -99,6 +99,8 @@ struct MixerView: View {
                         .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel(model.panic ? "Reativar o som do PC" : "Silenciar tudo no PC")
+                .disabled(model.status != .connected)  // never queue a stale toggle while away
+                .opacity(model.status == .connected ? 1 : 0.4)
             }
             Menu {
                 Button("Esquecer computador", role: .destructive) { confirmForget = true }
@@ -328,6 +330,7 @@ struct AppCard: View {
             }
             .padding(4)
         }
+        .frame(maxHeight: .infinity, alignment: .top)  // same height and top as its row neighbour
         .background(Archon.surface, in: RoundedRectangle(cornerRadius: 24))
         .contentShape(RoundedRectangle(cornerRadius: 24))
         .contextMenu {
@@ -419,6 +422,7 @@ struct MicCard: View {
             }
             .padding(4)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Archon.surface, in: RoundedRectangle(cornerRadius: 24))
         .contentShape(RoundedRectangle(cornerRadius: 24))
         .simultaneousGesture(

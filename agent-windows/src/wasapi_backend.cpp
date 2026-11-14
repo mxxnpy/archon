@@ -485,6 +485,9 @@ void WasapiBackend::refresh_sessions() {
     // Forget processes that no longer own a session (PIDs get reused).
     for (auto it = s.procs.begin(); it != s.procs.end();)
         it = live_pids.count(it->first) ? std::next(it) : s.procs.erase(it);
+    // Re-read each app's pinned output on refresh: it can also change in
+    // Windows Settings (App volume and device preferences).
+    for (auto& [pid, p] : s.procs) p.route_read = false;
 }
 
 void WasapiBackend::publish() {

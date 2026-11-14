@@ -215,6 +215,39 @@ bool decode_agent_info(Reader& r, AgentInfo& a) {
     return r.ok();  // tolerant: later versions may append fields
 }
 
+Bytes encode_stream_start(const StreamStart& s) {
+    Writer w;
+    w.u8(uint8_t(MsgType::StreamStart)).u16(s.udp_port).u8(s.flags).str(s.endpoint_id, kMaxId);
+    return w.take();
+}
+
+bool decode_stream_start(Reader& r, StreamStart& s) {
+    s.udp_port = r.u16();
+    s.flags = r.u8();
+    s.endpoint_id = r.str(kMaxId);
+    return r.ok();  // tolerant: later versions may append options
+}
+
+Bytes encode_stream_state(const StreamState& s) {
+    Writer w;
+    w.u8(uint8_t(MsgType::StreamState)).u8(s.active ? 1 : 0).u8(s.codec).u32(s.sample_rate).u8(s.channels);
+    w.u16(s.frame_ms).raw(s.key.data(), s.key.size()).u16(s.error);
+    return w.take();
+}
+
+bool decode_stream_state(Reader& r, StreamState& s) {
+    s.active = r.u8() != 0;
+    s.codec = r.u8();
+    s.sample_rate = r.u32();
+    s.channels = r.u8();
+    s.frame_ms = r.u16();
+    const uint8_t* k = r.take(32);
+    if (!k) return false;
+    std::memcpy(s.key.data(), k, 32);
+    s.error = r.u16();
+    return r.ok();
+}
+
 bool decode_set_route(Reader& r, std::string& source_id, std::string& endpoint_id) {
     source_id = r.str(kMaxId);
     endpoint_id = r.str(kMaxId);
