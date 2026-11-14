@@ -275,6 +275,7 @@ Volumes are `u16` in **0..10000** (0.00 % – 100.00 %). Ids are opaque strings
   | 2 | panic mute |
   | 3 | listening on the phone (1.3) |
   | 4 | browser tabs as sources (1.4) |
+  | 5 | profiles (1.5) |
 
   Controllers hide what the agent does not support. A 1.1 agent never sends
   AGENT_INFO: treat that as features = 0.
@@ -341,6 +342,45 @@ On the PC, the extension talks to a native-messaging host
 (`archon-tabs-host.exe` beside `Archon.exe` on Windows) that relays to the
 agent over a pipe only the same user can open; the agent accepts only that
 host, and the host talks only to the agent beside it.
+
+### Profiles (added in 1.5, backward compatible)
+
+A profile is a saved mixer state — the volume and mute of every output and
+microphone, and of each app (by name; "@system" for system sounds) — that the
+agent applies by hand or by itself. Feature bit 5 announces it. The agent keeps
+the profiles and runs the rules; controllers only see summaries and send edits.
+
+Profile body (PROFILE, SAVE_PROFILE): `str id` (≤ 512 B; empty in SAVE_PROFILE =
+new), `str name` (≤ 64 B), `u8 flags` (bit0 active: applied automatically and in
+force; bit1 automatic; bit2 restore when it ends; bit3 SAVE_PROFILE only: take the
+settings from the mixer now), `u8 days` (bit0 Sunday .. bit6 Saturday, 0 = every
+day), `u16 start_min`, `u16 end_min` (minutes after local midnight, < 1440;
+equal = all day; end < start = a window across midnight, which belongs to the
+day it starts), `str network` (≤ 128 B, empty = any), `str output_id`,
+`str output_name` (an output that must be present, e.g. headphones; empty =
+any), `u16 n` × (`str endpoint_id`, `str name`, `u16 volume`, `u8 muted`),
+`u16 m` × (`str app`, `u16 volume`, `u8 muted`). At most 32 profiles, 64
+devices and 256 apps each.
+
+| Type | Dir | Name | Body |
+| --- | --- | --- | --- |
+| `0x2C` | C→A | SAVE_PROFILE | profile body — new (empty id; starts from the mixer as it is) or replace an existing one. Empty lists keep the profile's settings (a rename or rules edit) |
+| `0x2D` | C→A | DELETE_PROFILE | `str id` |
+| `0x2E` | C→A | APPLY_PROFILE | `str id` — apply now, by hand |
+| `0x4B` | A→C | PROFILE | profile body — insert or replace by id (sent in every dump and on any change) |
+| `0x4C` | A→C | PROFILE_REMOVED | `str id` |
+| `0x4D` | A→C | CONTEXT | `str network` — the PC's network now (in every dump and when it changes) |
+
+Rules: an automatic profile applies when every condition it sets holds
+(days/hours, network, output present); one with no condition never applies by
+itself. When several match, the one with more conditions wins (then the first
+listed). The agent acts on changes only — when the profile that should be in
+force changes — so the user stays free to adjust things meanwhile. An app that
+starts while a profile is in force gets that profile's setting once. With
+"restore", when the conditions stop holding the agent puts back what the
+profile changed, except what the user changed since. A profile never unmutes
+anything during a panic mute. A device whose id changed is found again by its
+name when that name is unique.
 
 ### Level meters (added in 1.1, backward compatible)
 

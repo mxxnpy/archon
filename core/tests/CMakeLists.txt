@@ -7,6 +7,7 @@ add_executable(archon_tests
   test_trust_store.cpp
   test_features12.cpp
   test_stream13.cpp
+  test_profiles15.cpp
   adversarial/test_hostile_peer.cpp
   adversarial/test_pairing_policy.cpp
   adversarial/test_client_adv.cpp

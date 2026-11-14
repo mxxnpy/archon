@@ -141,6 +141,15 @@ public:
     virtual void stop(uint64_t stream_id) = 0;
 };
 
+// 1.5: where the agent keeps its profiles (one opaque blob). Calls come from
+// the server thread.
+class ProfileStore {
+public:
+    virtual ~ProfileStore() = default;
+    virtual bool load(Bytes& data) = 0;  // false = nothing stored yet
+    virtual bool save(const Bytes& data) = 0;
+};
+
 class Server final : public AudioSink {
 public:
     Server(ServerConfig cfg, AudioBackend& backend, TrustStore& store, ServerObserver& observer);
@@ -170,6 +179,10 @@ public:
     void stream_failed(uint64_t stream_id, ErrorCode reason);
     // Number of active streams (tray status).
     size_t active_streams() const { return active_streams_; }
+    // 1.5: enables profiles. Set before start(); the store must outlive the server.
+    void set_profile_store(ProfileStore* store) { profile_store_ = store; }
+    // The PC's network changed (name of the network it is on, "" = none). Thread-safe.
+    void network_changed(const std::string& name);
 
     // AudioSink (thread-safe)
     void endpoint_upsert(const EndpointInfo& e) override;
@@ -188,6 +201,7 @@ private:
     TrustStore& store_;
     ServerObserver& observer_;
     StreamService* stream_service_ = nullptr;
+    ProfileStore* profile_store_ = nullptr;
     std::atomic<size_t> active_streams_{0};
     std::unique_ptr<Impl> impl_;
     // Guards impl_'s lifetime against post() from other threads (backend

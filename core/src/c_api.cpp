@@ -18,7 +18,7 @@ struct Bridge final : arc::ClientListener {
         arc_event e;
         std::memset(&e, 0, sizeof e);
         e.type = t;
-        e.message = e.id = e.endpoint_id = e.name = e.icon_key = e.route = e.group = e.detail = "";
+        e.message = e.id = e.endpoint_id = e.name = e.icon_key = e.route = e.group = e.detail = e.network = "";
         return e;
     }
 
@@ -112,6 +112,36 @@ struct Bridge final : arc::ClientListener {
                 arc_event e = blank(ARC_EV_STREAM_STATE);
                 e.active = ev.stream.active ? 1 : 0;
                 e.error = arc_error(ev.stream.error);
+                cb(user, &e);
+                return;
+            }
+            case K::Profile: {
+                const arc::Profile& p = ev.profile;
+                arc_event e = blank(ARC_EV_PROFILE);
+                e.id = p.id.c_str();
+                e.name = p.name.c_str();
+                e.profile_flags = uint8_t((p.active ? ARC_PROFILE_ACTIVE : 0) | (p.automatic ? ARC_PROFILE_AUTOMATIC : 0) |
+                                          (p.restore ? ARC_PROFILE_RESTORE : 0));
+                e.days = p.days;
+                e.start_min = p.start_min;
+                e.end_min = p.end_min;
+                e.network = p.network.c_str();
+                e.endpoint_id = p.output_id.c_str();
+                e.detail = p.output_name.c_str();
+                e.n_endpoints = uint16_t(p.endpoints.size());
+                e.n_apps = uint16_t(p.apps.size());
+                cb(user, &e);
+                return;
+            }
+            case K::ProfileRemoved: {
+                arc_event e = blank(ARC_EV_PROFILE_REMOVED);
+                e.id = ev.id.c_str();
+                cb(user, &e);
+                return;
+            }
+            case K::Context: {
+                arc_event e = blank(ARC_EV_CONTEXT);
+                e.network = ev.message.c_str();
                 cb(user, &e);
                 return;
             }
@@ -239,6 +269,29 @@ int arc_client_stream_start(arc_client* c, unsigned flags, const char* endpoint_
     return c->client->stream_start(uint8_t(flags), endpoint_id ? endpoint_id : "") ? 1 : 0;
 }
 
+void arc_client_save_profile(arc_client* c, const char* id, const char* name, uint8_t flags, uint8_t days,
+                             uint16_t start_min, uint16_t end_min, const char* network, const char* output_id,
+                             const char* output_name, int capture) {
+    if (!c || !name) return;
+    arc::Profile p;
+    p.id = id ? id : "";
+    p.name = name;
+    p.automatic = flags & ARC_PROFILE_AUTOMATIC;
+    p.restore = flags & ARC_PROFILE_RESTORE;
+    p.days = days & 0x7F;
+    p.start_min = start_min < 24 * 60 ? start_min : 0;
+    p.end_min = end_min < 24 * 60 ? end_min : 0;
+    p.network = network ? network : "";
+    p.output_id = output_id ? output_id : "";
+    p.output_name = output_name ? output_name : "";
+    c->client->save_profile(p, capture != 0);
+}
+void arc_client_delete_profile(arc_client* c, const char* id) {
+    if (c && id) c->client->delete_profile(id);
+}
+void arc_client_apply_profile(arc_client* c, const char* id) {
+    if (c && id) c->client->apply_profile(id);
+}
 void arc_client_stream_stop(arc_client* c) {
     if (c) c->client->stream_stop();
 }

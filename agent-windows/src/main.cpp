@@ -8,6 +8,7 @@
 #include "archon/server.hpp"
 #include "archon/trust_store.hpp"
 #include "mdns.hpp"
+#include "network_watch.hpp"
 #include "ui.hpp"
 #include "loopback_stream.hpp"
 #include "tab_pipe.hpp"
@@ -64,6 +65,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         log_line(tabs_ok ? "browser tabs: ready for the extension" : "browser tabs unavailable: " + terr);
     }
     LoopbackStreams streams;  // "listen on the phone"
+    FileProfileStore profile_store;  // 1.5 profiles
     arc::ServerConfig scfg;
     scfg.agent_id = cfg.agent_id;
     scfg.agent_name = to_utf8(shown_name);
@@ -72,6 +74,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     scfg.locked_until_unix = cfg.locked_until;
     auto server = std::make_unique<arc::Server>(scfg, backend, store, ui);
     server->set_stream_service(&streams);
+    server->set_profile_store(&profile_store);
     if (!server->start(&err)) {
         // Port taken by something else: fall back to any free port. Phones
         // learn the port through mDNS, so discovery keeps working.
@@ -79,6 +82,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         scfg.port = 0;
         server = std::make_unique<arc::Server>(scfg, backend, store, ui);
         server->set_stream_service(&streams);
+    server->set_profile_store(&profile_store);
         if (!server->start(&err)) {
             log_line("server failed: " + err);
             ui.show_error(L"Archon não conseguiu iniciar / could not start:\n" + to_wide(err));
@@ -87,6 +91,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         }
     }
     streams.attach(server.get());
+    NetworkWatch network;  // profiles that switch by network
+    network.start([&server](const std::string& name) { server->network_changed(name); });
     log_line("listening on port " + std::to_string(server->port()));
 
     MdnsAdvertiser mdns;
@@ -99,6 +105,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     log_line("agent stopping");
     mdns.stop();
     tab_pipe.stop();
+    network.stop();
     server->stop();
     streams.attach(nullptr);  // a capture thread must not report to a server being destroyed
     ui.destroy();

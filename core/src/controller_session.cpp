@@ -180,6 +180,24 @@ void ControllerSession::handle_app(const Bytes& msg, Output& out) {
             out.events.push_back(std::move(ev));
             return;
         }
+        case MsgType::Profile: {
+            ControllerEvent ev{K::Profile};
+            if (!decode_profile_body(r, ev.profile)) return fail(out, ErrorCode::Protocol);
+            out.events.push_back(std::move(ev));
+            return;
+        }
+        case MsgType::ProfileRemoved: {
+            ControllerEvent ev{K::ProfileRemoved};
+            if (!decode_id(r, ev.id, kMaxId)) return fail(out, ErrorCode::Protocol);
+            out.events.push_back(std::move(ev));
+            return;
+        }
+        case MsgType::Context: {
+            ControllerEvent ev{K::Context};
+            if (!decode_context(r, ev.message)) return fail(out, ErrorCode::Protocol);
+            out.events.push_back(std::move(ev));
+            return;
+        }
         case MsgType::AgentInfo: {
             ControllerEvent ev{K::AgentInfo};
             if (!decode_agent_info(r, ev.agent)) return fail(out, ErrorCode::Protocol);

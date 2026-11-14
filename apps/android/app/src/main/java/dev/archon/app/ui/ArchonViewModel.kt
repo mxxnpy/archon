@@ -50,6 +50,8 @@ data class LinkState(
     val sources: Map<String, Source> = emptyMap(),
     val features: Int = 0,     // AGENT_INFO: what the PC supports
     val panic: Boolean = false, // everything muted by the panic mute
+    val profiles: Map<String, ProfileInfo> = emptyMap(),  // 1.5
+    val pcNetwork: String = "",
 ) {
     val outputs: List<Endpoint>
         get() = endpoints.values.filter { !it.input }
@@ -59,6 +61,7 @@ data class LinkState(
     val canRoute: Boolean get() = features and NativeClient.FEATURE_ROUTING != 0
     val canPanic: Boolean get() = features and NativeClient.FEATURE_PANIC != 0
     val canListen: Boolean get() = features and NativeClient.FEATURE_STREAM != 0
+    val canProfiles: Boolean get() = features and NativeClient.FEATURE_PROFILES != 0
 }
 
 /** One row on the computers screen. */
@@ -260,6 +263,15 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
         _listenError.value = null
     }
 
+    private val _showProfiles = MutableStateFlow(false)
+    override val showProfiles: StateFlow<Boolean> = _showProfiles.asStateFlow()
+    override fun setShowProfiles(on: Boolean) {
+        _showProfiles.value = on
+    }
+    override fun saveProfile(p: ProfileInfo, capture: Boolean) = client.saveProfile(p, capture)
+    override fun deleteProfile(id: String) = client.deleteProfile(id)
+    override fun applyProfile(id: String) = client.applyProfile(id)
+
     override fun togglePanic() {
         val on = !_link.value.panic
         _link.update { it.copy(panic = on) }
@@ -302,7 +314,12 @@ class ArchonViewModel(app: Application) : AndroidViewModel(app), ArchonUi {
                 _paired.value = store.all()
                 _screen.value = Screen.Mixer(Target(saved.agentId, saved.name, saved.host, saved.port))
             }
-            CoreEvent.STATE_RESET -> _link.update { it.copy(endpoints = emptyMap(), sources = emptyMap(), synced = false) }
+            CoreEvent.STATE_RESET -> _link.update {
+                it.copy(endpoints = emptyMap(), sources = emptyMap(), profiles = emptyMap(), synced = false)
+            }
+            CoreEvent.PROFILE -> e.profile?.let { p -> _link.update { it.copy(profiles = it.profiles + (p.id to p)) } }
+            CoreEvent.PROFILE_REMOVED -> _link.update { it.copy(profiles = it.profiles - e.id) }
+            CoreEvent.CONTEXT -> _link.update { it.copy(pcNetwork = e.message) }
             CoreEvent.STATE_SYNCED -> _link.update { it.copy(synced = true) }
             CoreEvent.ENDPOINT -> _link.update {
                 it.copy(endpoints = it.endpoints + (e.id to Endpoint(e.id, e.name, e.volume, e.muted, e.isDefault, e.meter,

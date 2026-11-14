@@ -65,9 +65,14 @@ typedef enum {
     ARC_EV_METERS = 9,           /* data = n x {u8 slot_hi, u8 slot_lo, u8 level 0..255}, data_len = 3n */
     ARC_EV_AGENT_INFO = 10,      /* features (ARC_FEATURE_*), panic, message = os ("windows", "macos") */
     ARC_EV_STREAM_STATE = 11,    /* 1.3: active (listening on the phone), error (why it stopped) */
-    ARC_EV_AUDIO = 12            /* 1.3: data/data_len = one Opus packet (48 kHz stereo 20 ms), seq; lost = 1
+    ARC_EV_AUDIO = 12,           /* 1.3: data/data_len = one Opus packet (48 kHz stereo 20 ms), seq; lost = 1
                                     and no data: that frame never arrived (decode as a gap). Network thread,
                                     ~50 per second: hand it to the audio thread quickly. */
+    ARC_EV_PROFILE = 13,         /* 1.5: id, name, profile_flags (ARC_PROFILE_*), days, start_min, end_min,
+                                    network, endpoint_id = output that must be present, detail = its name,
+                                    n_endpoints, n_apps (settings it holds) — insert or replace by id */
+    ARC_EV_PROFILE_REMOVED = 14, /* 1.5: id */
+    ARC_EV_CONTEXT = 15          /* 1.5: network = the PC's network now ("" = none) */
 } arc_event_type;
 
 typedef struct {
@@ -101,7 +106,15 @@ typedef struct {
     /* 1.4 */
     uint8_t tab;              /* SOURCE: a browser tab (no routing; mute = the tab's own mute) */
     const char* group;        /* SOURCE (tab): browser name */
-    const char* detail;       /* SOURCE (tab): site */
+    const char* detail;       /* SOURCE (tab): site; PROFILE: name of the output it waits for */
+    /* 1.5 */
+    uint8_t profile_flags;    /* PROFILE: ARC_PROFILE_ACTIVE | _AUTOMATIC | _RESTORE */
+    uint8_t days;             /* PROFILE: bit0 Sunday .. bit6 Saturday; 0 = every day */
+    uint16_t start_min;       /* PROFILE: minutes after midnight (start == end: all day) */
+    uint16_t end_min;
+    const char* network;      /* PROFILE: network it waits for ("" = any); CONTEXT: the PC's network */
+    uint16_t n_endpoints;     /* PROFILE */
+    uint16_t n_apps;          /* PROFILE */
 } arc_event;
 
 #define ARC_FEATURE_INPUTS 1u
@@ -109,6 +122,10 @@ typedef struct {
 #define ARC_FEATURE_PANIC 4u
 #define ARC_FEATURE_STREAM 8u
 #define ARC_FEATURE_TABS 16u
+#define ARC_FEATURE_PROFILES 32u
+#define ARC_PROFILE_ACTIVE 1u     /* applied automatically and in force now */
+#define ARC_PROFILE_AUTOMATIC 2u  /* applies by itself when its conditions hold */
+#define ARC_PROFILE_RESTORE 4u    /* puts things back when its conditions end */
 #define ARC_STREAM_MUTE_PC 1u
 
 typedef void (*arc_event_cb)(void* user, const arc_event* event);
@@ -145,6 +162,14 @@ void arc_client_panic_mute(arc_client* c, int on);
    output. Needs a live link; returns 0 otherwise. Audio then arrives as ARC_EV_AUDIO events. */
 int arc_client_stream_start(arc_client* c, unsigned flags, const char* endpoint_id);
 void arc_client_stream_stop(arc_client* c);
+/* 1.5: profiles. save: id NULL/"" = new profile, made from the mixer as it is now; an existing id keeps its
+   settings and changes name and conditions; capture = 1 also takes the settings from the mixer now.
+   flags: ARC_PROFILE_AUTOMATIC | ARC_PROFILE_RESTORE. Needs a live link. */
+void arc_client_save_profile(arc_client* c, const char* id, const char* name, uint8_t flags, uint8_t days,
+                             uint16_t start_min, uint16_t end_min, const char* network, const char* output_id,
+                             const char* output_name, int capture);
+void arc_client_delete_profile(arc_client* c, const char* id);
+void arc_client_apply_profile(arc_client* c, const char* id);
 
 /* Agent id (16 bytes) and PC name stored in a pairing record. Returns 0 if malformed. */
 int arc_record_info(const uint8_t* record, size_t record_len, uint8_t out_agent_id[16], char* out_name, size_t name_cap);

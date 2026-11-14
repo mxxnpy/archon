@@ -41,4 +41,11 @@ interface ArchonUi {
     fun toggleListening()
     fun setListenMutesPc(on: Boolean)
     fun dismissListenError()
+
+    /** 1.5: the profiles screen (over the mixer). */
+    val showProfiles: StateFlow<Boolean>
+    fun setShowProfiles(on: Boolean)
+    fun saveProfile(p: ProfileInfo, capture: Boolean)
+    fun deleteProfile(id: String)
+    fun applyProfile(id: String)
 }

@@ -37,6 +37,45 @@ struct Source: Identifiable, Equatable {
     var detail = ""  // site ("youtube.com")
 }
 
+/// 1.5: a profile as the phone sees it (the settings themselves stay on the PC).
+struct ProfileInfo: Identifiable, Equatable {
+    var id: String
+    var name: String
+    var active = false
+    var automatic = false
+    var restore = false
+    var days: UInt8 = 0
+    var startMin = 0
+    var endMin = 0
+    var network = ""
+    var outputId = ""
+    var outputName = ""
+    var nEndpoints = 0
+    var nApps = 0
+
+    var isNew: Bool { id.hasPrefix("new:") }
+    static func new(name: String) -> ProfileInfo { ProfileInfo(id: "new:" + UUID().uuidString, name: name) }
+
+    static func clock(_ m: Int) -> String { String(format: "%02d:%02d", m / 60, m % 60) }
+
+    /// "Seg–Sex 09:00–18:00 · Rede Casa · com Fone USB", or "Só manual".
+    var summary: String {
+        guard automatic else { return String(localized: "Só manual") }
+        var parts: [String] = []
+        if days != 0 || startMin != endMin {
+            let letters = [String(localized: "dom"), String(localized: "seg"), String(localized: "ter"), String(localized: "qua"),
+                           String(localized: "qui"), String(localized: "sex"), String(localized: "sáb")]
+            var d = days == 0 ? String(localized: "todo dia") : (0..<7).filter { days & (1 << $0) != 0 }.map { letters[$0] }.joined(separator: ", ")
+            if days == 0b0111110 { d = String(localized: "seg a sex") }
+            if days == 0b1000001 { d = String(localized: "fim de semana") }
+            parts.append(startMin == endMin ? d : d + " " + Self.clock(startMin) + "–" + Self.clock(endMin))
+        }
+        if !network.isEmpty { parts.append(String(localized: "rede \(network)")) }
+        if !outputId.isEmpty { parts.append(String(localized: "com \(outputName)")) }
+        return parts.joined(separator: " · ")
+    }
+}
+
 struct PCRow: Identifiable, Equatable {
     var target: Target
     var paired: Bool
@@ -79,6 +118,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var features: UInt32 = 0
     /// Everything on the PC muted by the panic mute.
     @Published private(set) var panic = false
+    @Published private(set) var profiles: [String: ProfileInfo] = [:]  // 1.5
+    @Published private(set) var pcNetwork = ""
+    @Published var showProfiles = false
     /// "Ouvir no celular": the user wants the PC's audio on this phone.
     @Published private(set) var listening = false
     /// Why listening stopped on its own (CoreErr code), shown once.
@@ -168,6 +210,20 @@ final class AppModel: ObservableObject {
             mixer(); status = .connected; panic = true
         case "listen":
             mixer(); status = .connected; listening = true
+        case "profiles":
+            mixer(); status = .connected
+            features |= CoreClient.featureProfiles
+            pcNetwork = "MaHe-Casa-5G"
+            for p in [
+                ProfileInfo(id: "p1", name: "Trabalho", active: true, automatic: true, restore: true, days: 0b0111110,
+                            startMin: 540, endMin: 1080, network: "MaHe-Casa-5G", nEndpoints: 3, nApps: 5),
+                ProfileInfo(id: "p2", name: "Fones", automatic: true, outputId: "e2", outputName: "Fone Bluetooth",
+                            nEndpoints: 3, nApps: 5),
+                ProfileInfo(id: "p3", name: "Noite", automatic: true, restore: true, days: 0, startMin: 1320, endMin: 420,
+                            nEndpoints: 3, nApps: 5),
+                ProfileInfo(id: "p4", name: "Live", nEndpoints: 3, nApps: 6),
+            ] { profiles[p.id] = p }
+            showProfiles = true
         case "tabs":
             mixer(); status = .connected
             features |= CoreClient.featureTabs
@@ -315,6 +371,23 @@ final class AppModel: ObservableObject {
     }
 
     var canRoute: Bool { features & CoreClient.featureRouting != 0 }
+    var canProfiles: Bool { features & CoreClient.featureProfiles != 0 }
+    var sortedProfiles: [ProfileInfo] {
+        profiles.values.sorted { $0.active != $1.active ? $0.active : $0.name.lowercased() < $1.name.lowercased() }
+    }
+    func saveProfile(_ p: ProfileInfo, capture: Bool) {
+        if demo { return }
+        client.saveProfile(p, capture: capture)
+    }
+    func deleteProfile(_ id: String) {
+        if demo { return }
+        client.deleteProfile(id)
+    }
+    func applyProfile(_ id: String) {
+        if demo { return }
+        client.applyProfile(id)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
     var canListen: Bool { features & CoreClient.featureStream != 0 }
 
     func toggleListening() { listening ? stopListening() : startListening() }
@@ -417,7 +490,17 @@ final class AppModel: ObservableObject {
             paired = store.all()
             screen = .mixer(Target(agentId: saved.agentId, name: saved.name, host: saved.host, port: saved.port))
         case ARC_EV_STATE_RESET:
-            endpoints = [:]; sources = [:]; synced = false
+            endpoints = [:]; sources = [:]; profiles = [:]; synced = false
+        case ARC_EV_PROFILE:
+            profiles[e.id] = ProfileInfo(id: e.id, name: e.name, active: e.profileFlags & UInt8(ARC_PROFILE_ACTIVE) != 0,
+                                         automatic: e.profileFlags & UInt8(ARC_PROFILE_AUTOMATIC) != 0,
+                                         restore: e.profileFlags & UInt8(ARC_PROFILE_RESTORE) != 0, days: e.days,
+                                         startMin: e.startMin, endMin: e.endMin, network: e.network, outputId: e.endpointId,
+                                         outputName: e.detail, nEndpoints: e.nEndpoints, nApps: e.nApps)
+        case ARC_EV_PROFILE_REMOVED:
+            profiles[e.id] = nil
+        case ARC_EV_CONTEXT:
+            pcNetwork = e.network
         case ARC_EV_STATE_SYNCED:
             synced = true
         case ARC_EV_ENDPOINT:

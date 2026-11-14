@@ -45,6 +45,9 @@ enum class MsgType : uint8_t {
     PanicMute = 0x29,       // 1.2
     StreamStart = 0x2A,     // 1.3
     StreamStop = 0x2B,      // 1.3
+    SaveProfile = 0x2C,     // 1.5
+    DeleteProfile = 0x2D,   // 1.5
+    ApplyProfile = 0x2E,    // 1.5
 
     StateReset = 0x40,
     Endpoint = 0x41,
@@ -57,6 +60,9 @@ enum class MsgType : uint8_t {
     Meters = 0x48,
     AgentInfo = 0x49,  // 1.2
     StreamState = 0x4A,  // 1.3
+    Profile = 0x4B,         // 1.5
+    ProfileRemoved = 0x4C,  // 1.5
+    Context = 0x4D,         // 1.5: what the agent's automatic profiles look at
 };
 
 enum class Mode : uint8_t { Pair = 1, Resume = 2 };
@@ -196,6 +202,7 @@ enum AgentFeature : uint32_t {
     kFeaturePanic = 1u << 2,
     kFeatureStream = 1u << 3,  // 1.3: listen to the PC on the phone
     kFeatureTabs = 1u << 4,    // 1.4: browser tabs can appear as sources (extension bridge running)
+    kFeatureProfiles = 1u << 5,  // 1.5: profiles (saved mixer states, automatic by time/network/output)
 };
 
 // ---- 1.3: listening on the phone ------------------------------------------------

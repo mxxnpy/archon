@@ -121,6 +121,8 @@ fun ArchonApp(vm: ArchonUi) {
                 is Screen.Mixer -> MixerScreen(vm, s.target)
             }
         }
+        val profilesOpen by vm.showProfiles.collectAsState()
+        if (profilesOpen && screen is Screen.Mixer) ProfilesScreen(vm)
     }
 }
 
@@ -613,6 +615,9 @@ private fun MixerScreen(vm: ArchonUi, target: Target) {
                     Icon(Glyphs.More, contentDescription = stringResource(R.string.a11y_more), tint = Archon.Paper)
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = Archon.Surface) {
+                    if (link.canProfiles) DropdownMenuItem(text = { Text(stringResource(R.string.profiles)) }, onClick = {
+                        menu = false; vm.setShowProfiles(true)
+                    })
                     DropdownMenuItem(text = { Text(stringResource(R.string.forget_pc)) }, onClick = {
                         menu = false; confirmForget = true
                     })

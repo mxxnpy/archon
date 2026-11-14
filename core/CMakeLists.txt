@@ -17,6 +17,7 @@ add_library(archon_core STATIC
   src/trust_store.cpp
   src/c_api.cpp
   src/stream.cpp
+  src/profiles.cpp
 )
 target_include_directories(archon_core PUBLIC include)
 target_link_libraries(archon_core PUBLIC monocypher)

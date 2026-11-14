@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <ctime>
 #include <deque>
 #include <future>
 #include <memory>
@@ -13,6 +14,7 @@
 #include "archon/crypto.hpp"
 #include "archon/frame.hpp"
 #include "archon/net.hpp"
+#include "archon/profiles.hpp"
 
 namespace arc {
 
@@ -278,7 +280,8 @@ struct Server::Impl {
 
     AgentInfo agent_info() const {
         AgentInfo a;
-        a.features = s.backend_.features() | kFeaturePanic | (s.stream_service_ ? kFeatureStream : 0u);
+        a.features = s.backend_.features() | kFeaturePanic | (s.stream_service_ ? kFeatureStream : 0u) |
+                     (s.profile_store_ ? kFeatureProfiles : 0u);
         a.panic = panic;
         a.os = s.backend_.os_name();
         return a;
@@ -326,9 +329,218 @@ struct Server::Impl {
         log(on ? "panic mute on" : "panic mute off");
     }
 
+    // ---- profiles (1.5) -----------------------------------------------------------
+
+    std::vector<Profile> profiles;
+    std::string network;           // the PC's network now
+    std::string auto_active;       // id of the automatic profile in force ("" = none)
+    bool profiles_dirty_eval = false;
+    Clock::time_point next_profile_eval{};
+    // What an automatic profile changed, to put it back when it ends ("restore").
+    struct Change {
+        uint16_t before_volume, set_volume;
+        bool before_muted, set_muted;
+    };
+    std::map<std::string, Change> ep_changes;   // endpoint id
+    std::map<std::string, Change> app_changes;  // source id
+    std::set<std::string> app_applied;          // sources the profile in force already handled
+
+    bool profiles_on() const { return s.profile_store_ != nullptr; }
+
+    void load_profiles() {
+        if (!profiles_on()) return;
+        Bytes data;
+        if (s.profile_store_->load(data) && !parse_profiles(data, profiles)) {
+            log("profiles file unreadable; starting with none");
+            profiles.clear();
+        }
+        next_profile_eval = Clock::now() + std::chrono::milliseconds(1500);  // after the first device report
+    }
+
+    void save_profiles() {
+        if (profiles_on() && !s.profile_store_->save(serialize_profiles(profiles))) log("could not save profiles");
+    }
+
+    Profile* find_profile(const std::string& id) {
+        for (Profile& p : profiles)
+            if (p.id == id) return &p;
+        return nullptr;
+    }
+
+    ProfileContext profile_context() const {
+        ProfileContext ctx;
+        const std::time_t t = std::time(nullptr);
+        std::tm lt{};
+#ifdef _WIN32
+        localtime_s(&lt, &t);
+#else
+        localtime_r(&t, &lt);
+#endif
+        ctx.weekday = lt.tm_wday;
+        ctx.minute = lt.tm_hour * 60 + lt.tm_min;
+        ctx.network = network;
+        for (auto& [id, e] : endpoints)
+            if (!e.input) ctx.outputs.insert(id);
+        return ctx;
+    }
+
+    const EndpointInfo* endpoint_for(const ProfileEndpoint& pe) const {
+        auto it = endpoints.find(pe.id);
+        if (it != endpoints.end()) return &it->second;
+        const EndpointInfo* by_name = nullptr;  // the device came back with another id: same name, if unique
+        for (auto& [id, e] : endpoints)
+            if (e.name == pe.name) {
+                if (by_name) return nullptr;
+                by_name = &e;
+            }
+        return by_name;
+    }
+
+    void set_endpoint(const EndpointInfo& e, uint16_t volume, bool muted, bool track) {
+        if (track && !ep_changes.count(e.id)) ep_changes[e.id] = Change{e.volume, volume, e.muted, muted};
+        if (e.volume != volume) s.backend_.set_endpoint_volume(e.id, volume);
+        // A panic keeps everything muted: a profile never unmutes during one.
+        if (e.muted != muted && !(panic && !muted)) request_mute(e.id, muted);
+    }
+
+    void set_app(const SourceInfo& src, const ProfileApp& a, bool track) {
+        if (track && !app_changes.count(src.id)) app_changes[src.id] = Change{src.volume, a.volume, src.muted, a.muted};
+        if (src.volume != a.volume) s.backend_.set_source_volume(src.id, a.volume);
+        if (src.muted != a.muted) s.backend_.set_source_mute(src.id, a.muted);
+    }
+
+    void apply_profile(const Profile& p, bool track) {
+        for (const ProfileEndpoint& pe : p.endpoints)
+            if (const EndpointInfo* e = endpoint_for(pe)) set_endpoint(*e, pe.volume, pe.muted, track);
+        for (auto& [id, src] : sources) {
+            if (src.tab) continue;
+            const std::string key = profile_app_key(src);
+            for (const ProfileApp& a : p.apps)
+                if (a.key == key) {
+                    set_app(src, a, track);
+                    if (track) app_applied.insert(id);
+                    break;
+                }
+        }
+        log("profile applied: " + p.name);
+    }
+
+    // Puts back what the ending profile changed, unless the user changed it since.
+    void restore_changes() {
+        for (auto& [id, ch] : ep_changes) {
+            auto it = endpoints.find(id);
+            if (it == endpoints.end()) continue;
+            const EndpointInfo& e = it->second;
+            if (e.volume == ch.set_volume && ch.before_volume != ch.set_volume)
+                s.backend_.set_endpoint_volume(id, ch.before_volume);
+            if (e.muted == ch.set_muted && ch.before_muted != ch.set_muted && !(panic && !ch.before_muted))
+                request_mute(id, ch.before_muted);
+        }
+        for (auto& [id, ch] : app_changes) {
+            auto it = sources.find(id);
+            if (it == sources.end()) continue;
+            if (it->second.volume == ch.set_volume && ch.before_volume != ch.set_volume)
+                s.backend_.set_source_volume(id, ch.before_volume);
+            if (it->second.muted == ch.set_muted && ch.before_muted != ch.set_muted)
+                s.backend_.set_source_mute(id, ch.before_muted);
+        }
+    }
+
+    void end_auto_profile() {
+        Profile* old = find_profile(auto_active);
+        if (old && old->restore) restore_changes();
+        if (old) {
+            old->active = false;
+            broadcast(encode_profile(MsgType::Profile, *old));
+        }
+        auto_active.clear();
+        ep_changes.clear();
+        app_changes.clear();
+        app_applied.clear();
+    }
+
+    void evaluate_profiles(Clock::time_point now) {
+        if (!profiles_on() || next_profile_eval == Clock::time_point{}) return;
+        if (!profiles_dirty_eval && now < next_profile_eval) return;
+        profiles_dirty_eval = false;
+        next_profile_eval = now + std::chrono::seconds(20);
+        const int best = pick_profile(profiles, profile_context());
+        const std::string want = best >= 0 ? profiles[size_t(best)].id : std::string();
+        if (want == auto_active) return;  // edges only: the user stays free to change things meanwhile
+        if (!auto_active.empty()) end_auto_profile();
+        if (want.empty()) return;
+        Profile& p = profiles[size_t(best)];
+        auto_active = p.id;
+        p.active = true;
+        apply_profile(p, true);
+        broadcast(encode_profile(MsgType::Profile, p));
+    }
+
+    // An app that starts while a profile is in force gets that profile's setting once.
+    void profile_new_source(const SourceInfo& src) {
+        if (auto_active.empty() || src.tab || app_applied.count(src.id)) return;
+        const Profile* p = find_profile(auto_active);
+        if (!p) return;
+        const std::string key = profile_app_key(src);
+        for (const ProfileApp& a : p->apps)
+            if (a.key == key) {
+                app_applied.insert(src.id);
+                set_app(src, a, true);
+                return;
+            }
+    }
+
+    void on_save_profile(Reader& r) {
+        Profile in;
+        uint8_t flags = 0;
+        if (!profiles_on() || !decode_profile_body(r, in, &flags)) return;
+        if (in.name.empty()) return;
+        if (in.automatic && profile_specificity(in) == 0) in.automatic = false;  // nothing to wait for
+        if (in.output_id.empty()) in.output_name.clear();
+        in.active = false;
+        Profile* p = in.id.empty() ? nullptr : find_profile(in.id);
+        if (!in.id.empty() && !p) return;  // unknown id (deleted meanwhile)
+        if (!p) {
+            if (profiles.size() >= kMaxProfiles) return;
+            in.id = to_hex(random_array<8>());
+            const bool empty = in.endpoints.empty() && in.apps.empty();
+            profiles.push_back(in);
+            p = &profiles.back();
+            if (empty) profile_capture(*p, endpoints, sources);  // a new profile starts from the mixer as it is
+        } else {
+            const bool was_active = p->active;
+            std::vector<ProfileEndpoint> eps = p->endpoints;
+            std::vector<ProfileApp> apps = p->apps;
+            *p = in;
+            p->active = was_active;
+            if (in.endpoints.empty() && in.apps.empty()) {  // a rules-only edit keeps the settings
+                p->endpoints = std::move(eps);
+                p->apps = std::move(apps);
+            }
+        }
+        if (flags & kProfileFlagCapture) profile_capture(*p, endpoints, sources);
+        save_profiles();
+        broadcast(encode_profile(MsgType::Profile, *p));
+        profiles_dirty_eval = true;
+    }
+
+    void on_delete_profile(const std::string& id) {
+        auto it = std::find_if(profiles.begin(), profiles.end(), [&](const Profile& p) { return p.id == id; });
+        if (it == profiles.end()) return;
+        if (auto_active == id) end_auto_profile();
+        profiles.erase(std::find_if(profiles.begin(), profiles.end(), [&](const Profile& p) { return p.id == id; }));
+        save_profiles();
+        broadcast(encode_id(MsgType::ProfileRemoved, id));
+        profiles_dirty_eval = true;
+    }
+
     void send_dump(Conn& c) {
         queue_app(c, encode_simple(MsgType::StateReset));
         queue_app(c, encode_agent_info(agent_info()));
+        if (profiles_on()) {
+            queue_app(c, encode_context(network));
+            for (const Profile& p : profiles) queue_app(c, encode_profile(MsgType::Profile, p));
+        }
         for (auto& [id, e] : endpoints) queue_app(c, encode_endpoint(e));
         for (auto& [id, src] : sources) queue_app(c, encode_source(src));
         queue_app(c, encode_simple(MsgType::StateSynced));
@@ -650,6 +862,16 @@ struct Server::Impl {
             case MsgType::StreamStop:
                 end_stream(c, ErrorCode::None, true);
                 return;
+            case MsgType::SaveProfile:
+                on_save_profile(r);
+                return;
+            case MsgType::DeleteProfile:
+                if (decode_id(r, id, kMaxId)) on_delete_profile(id);
+                return;
+            case MsgType::ApplyProfile:
+                if (decode_id(r, id, kMaxId))
+                    if (const Profile* p = find_profile(id)) apply_profile(*p, false);  // by hand: nothing to restore later
+                return;
             default:
                 return;  // unknown: ignore (forward compatibility)
         }
@@ -879,6 +1101,7 @@ struct Server::Impl {
             }
             check_timeouts(now);
             expire_pending_mutes(now);
+            evaluate_profiles(now);
             for (auto& [id, c] : conns)
                 if (!c->dead && c->out_pos < c->out.size()) flush_conn(*c);
             reap();
@@ -914,6 +1137,7 @@ bool Server::start(std::string* err) {
         impl_.reset();
         return false;
     }
+    impl_->load_profiles();
     impl_->listener = net::listen_tcp(cfg_.port, cfg_.loopback_only, &port_, err);
     if (impl_->listener == net::kInvalidSocket) {
         impl_.reset();
@@ -998,6 +1222,16 @@ void Server::stream_failed(uint64_t stream_id, ErrorCode reason) {
     });
 }
 
+void Server::network_changed(const std::string& name) {
+    post([this, name] {
+        if (impl_->network == name) return;
+        impl_->network = name;
+        if (!impl_->profiles_on()) return;
+        impl_->broadcast(encode_context(name));
+        impl_->profiles_dirty_eval = true;
+    });
+}
+
 void Server::panic_mute(bool on) {
     post([this, on] { impl_->set_panic(on); });
 }
@@ -1045,6 +1279,7 @@ void Server::endpoint_upsert(const EndpointInfo& e) {
             impl_->panic_muted.insert(e.id);
             impl_->request_mute(e.id, true);
         }
+        if (is_new && !e.input) impl_->profiles_dirty_eval = true;  // headphones plugged in?
     });
 }
 
@@ -1057,6 +1292,7 @@ void Server::endpoint_removed(const std::string& id) {
         impl_->free_slot(id);
         if (impl_->endpoints.erase(id) == 0) return;
         impl_->broadcast(encode_id(MsgType::EndpointRemoved, id));
+        impl_->profiles_dirty_eval = true;
     });
 }
 
@@ -1065,8 +1301,10 @@ void Server::source_upsert(const SourceInfo& src) {
         src.meter = impl_->slot_for(src.id);
         auto it = impl_->sources.find(src.id);
         if (it != impl_->sources.end() && it->second == src) return;
+        const bool is_new = it == impl_->sources.end();
         impl_->sources[src.id] = src;
         impl_->broadcast(encode_source(src));
+        if (is_new) impl_->profile_new_source(src);
     });
 }
 

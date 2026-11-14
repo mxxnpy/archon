@@ -139,6 +139,16 @@ void Client::set_source_mute(const std::string& id, bool m) {
 void Client::set_source_route(const std::string& id, const std::string& endpoint) {
     enqueue(MsgType::SetSourceRoute, id, encode_set_route(id, endpoint), true);
 }
+void Client::save_profile(const Profile& p, bool capture) {
+    // Not coalesced: two different new profiles both have an empty id.
+    enqueue(MsgType::SaveProfile, {}, encode_profile(MsgType::SaveProfile, p, capture ? kProfileFlagCapture : 0), false);
+}
+void Client::delete_profile(const std::string& id) {
+    enqueue(MsgType::DeleteProfile, id, encode_id(MsgType::DeleteProfile, id), true);
+}
+void Client::apply_profile(const std::string& id) {
+    enqueue(MsgType::ApplyProfile, id, encode_id(MsgType::ApplyProfile, id), false);
+}
 void Client::panic_mute(bool on) {
     bool live_now;
     {

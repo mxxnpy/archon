@@ -88,6 +88,11 @@ public:
     // otherwise or if no UDP port could be opened. flags: kStreamFlagMutePc.
     bool stream_start(uint8_t flags, const std::string& endpoint_id = {});
     void stream_stop();
+    // 1.5: profiles. save: empty id = new (starts from the mixer as it is);
+    // capture = also take the settings from the mixer now. Need a live link.
+    void save_profile(const Profile& p, bool capture);
+    void delete_profile(const std::string& id);
+    void apply_profile(const std::string& id);
     void request_icon(const std::string& icon_key);
     void refresh();
     // Subscribe to live level meters (kept across reconnects).

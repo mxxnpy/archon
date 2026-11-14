@@ -72,6 +72,7 @@ struct MixerView: View {
         // Live levels only while the mixer is visible, and never with Reduce Motion / Low Power.
         .onAppear { model.setMetersVisible(!reduce && !ProcessInfo.processInfo.isLowPowerModeEnabled) }
         .onDisappear { model.setMetersVisible(false) }
+        .sheet(isPresented: $model.showProfiles) { ProfilesView().environmentObject(model) }
         .confirmationDialog("Esquecer computador", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Esquecer", role: .destructive) { model.forget(target) }
             Button("Cancelar", role: .cancel) {}
@@ -133,6 +134,9 @@ struct MixerView: View {
                 .opacity(model.status == .connected ? 1 : 0.4)
             }
             Menu {
+                if model.canProfiles {
+                    Button { model.showProfiles = true } label: { Label("Perfis", systemImage: "square.stack.3d.up") }
+                }
                 Button("Esquecer computador", role: .destructive) { confirmForget = true }
             } label: {
                 Image(systemName: "ellipsis").foregroundStyle(Archon.paper).frame(width: 44, height: 44)

@@ -8,6 +8,7 @@
   src/loopback_stream.cpp
   src/tab_pipe.cpp
   src/win_proc.cpp
+  src/network_watch.cpp
   app.rc
 )
 set_target_properties(archon_agent PROPERTIES OUTPUT_NAME "Archon")
@@ -47,6 +48,13 @@ add_custom_command(TARGET archon_tabs_e2e POST_BUILD
 if(MSVC)
   target_compile_options(archon_tabs_e2e PRIVATE /W4 /utf-8)
 endif()
+
+# Manual check of the network name the profiles see (1.5).
+add_executable(archon_network_probe tests/network_probe.cpp src/network_watch.cpp src/win_util.cpp)
+target_include_directories(archon_network_probe PRIVATE src)
+target_link_libraries(archon_network_probe PRIVATE archon_core ole32 oleaut32 uuid crypt32 iphlpapi shell32 shlwapi
+  windowscodecs advapi32 user32 gdi32 version propsys secur32)
+target_compile_definitions(archon_network_probe PRIVATE UNICODE _UNICODE)
 
 # Manual end-to-end check against the real audio stack (not part of ctest:
 # needs an output device and changes/restores the system sounds volume).

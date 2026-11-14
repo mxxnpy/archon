@@ -26,6 +26,13 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
     /** Listen to the PC on this phone; audio then goes to [audioSink]. */
     fun streamStart(mutePc: Boolean): Boolean = nativeStreamStart(handle, mutePc)
     fun streamStop() = nativeStreamStop(handle)
+    /** 1.5: save a profile (new = from the mixer as it is; capture = take the mixer now). */
+    fun saveProfile(p: dev.archon.app.ui.ProfileInfo, capture: Boolean) = nativeSaveProfile(
+        handle, (if (p.isNew) "" else p.id).toByteArray(), p.name.toByteArray(),
+        (if (p.automatic) PROFILE_AUTOMATIC else 0) or (if (p.restore) PROFILE_RESTORE else 0),
+        p.days, p.startMin, p.endMin, p.network.toByteArray(), p.outputId.toByteArray(), p.outputName.toByteArray(), capture)
+    fun deleteProfile(id: String) = nativeDeleteProfile(handle, id.toByteArray())
+    fun applyProfile(id: String) = nativeApplyProfile(handle, id.toByteArray())
     /** Opus packets of the PC's audio (network thread, ~50/s). */
     @Volatile var audioSink: ((ByteArray?, Long, Boolean) -> Unit)? = null
 
@@ -56,6 +63,21 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
         )
     }
 
+    // Called from native code for ARC_EV_PROFILE (see archon_jni.cpp; signature must match).
+    @Suppress("unused")
+    private fun onProfile(
+        id: ByteArray?, name: ByteArray?, flags: Int, days: Int, start: Int, end: Int, network: ByteArray?,
+        outputId: ByteArray?, outputName: ByteArray?, nEndpoints: Int, nApps: Int,
+    ) {
+        val p = dev.archon.app.ui.ProfileInfo(
+            id = id.s(), name = name.s(), active = flags and PROFILE_ACTIVE != 0, automatic = flags and PROFILE_AUTOMATIC != 0,
+            restore = flags and PROFILE_RESTORE != 0, days = days, startMin = start, endMin = end, network = network.s(),
+            outputId = outputId.s(), outputName = outputName.s(), nEndpoints = nEndpoints, nApps = nApps,
+        )
+        sink(CoreEvent(CoreEvent.PROFILE, 0, 0, "", p.id, "", p.name, "", 0, 0, false, false, false, false, 0, null,
+            profile = p))
+    }
+
     // Called from native code for ARC_EV_AUDIO (see archon_jni.cpp; signature must match).
     @Suppress("unused")
     private fun onAudio(data: ByteArray?, seq: Long, lost: Boolean) {
@@ -80,6 +102,10 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
     private external fun nativePanic(handle: Long, on: Boolean)
     private external fun nativeStreamStart(handle: Long, mutePc: Boolean): Boolean
     private external fun nativeStreamStop(handle: Long)
+    private external fun nativeSaveProfile(handle: Long, id: ByteArray, name: ByteArray, flags: Int, days: Int, start: Int,
+        end: Int, network: ByteArray, outputId: ByteArray, outputName: ByteArray, capture: Boolean)
+    private external fun nativeDeleteProfile(handle: Long, id: ByteArray)
+    private external fun nativeApplyProfile(handle: Long, id: ByteArray)
 
     companion object {
         const val MAX_VOLUME = 10000
@@ -88,6 +114,10 @@ class NativeClient(controllerId: ByteArray, name: String, private val sink: (Cor
         const val FEATURE_PANIC = 4
         const val FEATURE_STREAM = 8
         const val FEATURE_TABS = 16
+        const val FEATURE_PROFILES = 32
+        const val PROFILE_ACTIVE = 1
+        const val PROFILE_AUTOMATIC = 2
+        const val PROFILE_RESTORE = 4
         const val DEFAULT_PORT = 47321
         const val SERVICE_TYPE = "_archon._tcp."
 
@@ -119,6 +149,7 @@ data class CoreEvent(
     val active: Boolean = false,  // 1.3 STREAM_STATE
     // 1.4: a browser tab (SOURCE)
     val tab: Boolean = false, val group: String = "", val detail: String = "",
+    val profile: dev.archon.app.ui.ProfileInfo? = null,  // 1.5 PROFILE
 ) {
     companion object {
         const val STATUS = 0
@@ -133,6 +164,9 @@ data class CoreEvent(
         const val METERS = 9
         const val AGENT_INFO = 10
         const val STREAM_STATE = 11
+        const val PROFILE = 13
+        const val PROFILE_REMOVED = 14
+        const val CONTEXT = 15
     }
 }
 

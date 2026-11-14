@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "archon/crypto.hpp"
+#include "archon/profiles.hpp"
 #include "archon/protocol.hpp"
 
 namespace arc {
@@ -27,6 +28,9 @@ struct ControllerEvent {
         Meters,          // levels for meter slots (see EndpointInfo/SourceInfo::meter)
         AgentInfo,       // 1.2: features the agent supports, panic state
         StreamState,     // 1.3: listening on the phone started/stopped
+        Profile,         // 1.5: a profile (insert or replace by id)
+        ProfileRemoved,  // 1.5: id
+        Context,         // 1.5: the PC's network now (message)
         Error,           // agent reported an error; connection will close
     };
     ControllerEvent(Kind k = Kind::Error) : kind(k) {}  // NOLINT: implicit for brace-init
@@ -42,6 +46,7 @@ struct ControllerEvent {
     std::vector<MeterLevel> meters;
     arc::AgentInfo agent;  // AgentInfo
     arc::StreamState stream;  // StreamState
+    arc::Profile profile;     // Profile
 };
 
 class ControllerSession {

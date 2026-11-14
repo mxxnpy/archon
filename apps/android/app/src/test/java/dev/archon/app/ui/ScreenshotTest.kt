@@ -61,6 +61,11 @@ class ScreenshotTest {
         override fun toggleListening() {}
         override fun setListenMutesPc(on: Boolean) {}
         override fun dismissListenError() {}
+        override val showProfiles = MutableStateFlow(false)
+        override fun setShowProfiles(on: Boolean) { showProfiles.value = on }
+        override fun saveProfile(p: ProfileInfo, capture: Boolean) {}
+        override fun deleteProfile(id: String) {}
+        override fun applyProfile(id: String) {}
     }
 
     private val pc = Target("a".repeat(32), "DESKTOP-01", "192.168.0.10", 47321)
@@ -143,6 +148,20 @@ class ScreenshotTest {
     @Test fun mixerListening() = shoot("3f-mixer-listening", mixerUi().apply {
         link.value = link.value.copy(features = link.value.features or NativeClient.FEATURE_STREAM)
         listening.value = true
+    })
+
+    // 1.5: profiles screen over the mixer.
+    @Test fun profiles() = shoot("3h-profiles", mixerUi().apply {
+        val list = listOf(
+            ProfileInfo("p1", "Trabalho", active = true, automatic = true, restore = true, days = 0b0111110,
+                startMin = 540, endMin = 1080, network = "MaHe-Casa-5G", nEndpoints = 3, nApps = 5),
+            ProfileInfo("p2", "Fones", automatic = true, outputId = "e2", outputName = "Fone Bluetooth", nEndpoints = 3, nApps = 5),
+            ProfileInfo("p3", "Noite", automatic = true, restore = true, startMin = 1320, endMin = 420, nEndpoints = 3, nApps = 5),
+            ProfileInfo("p4", "Live", nEndpoints = 3, nApps = 6),
+        ).associateBy { it.id }
+        link.value = link.value.copy(features = link.value.features or NativeClient.FEATURE_PROFILES, profiles = list,
+            pcNetwork = "MaHe-Casa-5G")
+        showProfiles.value = true
     })
 
     // 1.4: browser tabs below the apps (two apps so the tabs are on screen).

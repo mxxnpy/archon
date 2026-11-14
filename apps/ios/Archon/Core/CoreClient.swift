@@ -34,6 +34,14 @@ final class CoreClient {
         var tab = false
         var group = ""
         var detail = ""
+        // 1.5
+        var profileFlags: UInt8 = 0
+        var days: UInt8 = 0
+        var startMin = 0
+        var endMin = 0
+        var network = ""
+        var nEndpoints = 0
+        var nApps = 0
     }
 
     static let featureInputs = UInt32(ARC_FEATURE_INPUTS)
@@ -41,6 +49,7 @@ final class CoreClient {
     static let featurePanic = UInt32(ARC_FEATURE_PANIC)
     static let featureStream = UInt32(ARC_FEATURE_STREAM)
     static let featureTabs = UInt32(ARC_FEATURE_TABS)
+    static let featureProfiles = UInt32(ARC_FEATURE_PROFILES)
 
     static let maxVolume = Int(ARC_MAX_VOLUME)
     static let defaultPort = UInt16(ARC_DEFAULT_PORT)
@@ -114,6 +123,14 @@ final class CoreClient {
     @discardableResult
     func streamStart(mutePC: Bool) -> Bool { arc_client_stream_start(handle, mutePC ? UInt32(ARC_STREAM_MUTE_PC) : 0, nil) != 0 }
     func streamStop() { arc_client_stream_stop(handle) }
+    /// 1.5: save a profile (empty id = new, from the mixer as it is; capture = take the mixer now).
+    func saveProfile(_ p: ProfileInfo, capture: Bool) {
+        let flags = UInt8((p.automatic ? ARC_PROFILE_AUTOMATIC : 0) | (p.restore ? ARC_PROFILE_RESTORE : 0))
+        arc_client_save_profile(handle, p.isNew ? "" : p.id, p.name, flags, p.days, UInt16(p.startMin), UInt16(p.endMin),
+                                p.network, p.outputId, p.outputName, capture ? 1 : 0)
+    }
+    func deleteProfile(_ id: String) { arc_client_delete_profile(handle, id) }
+    func applyProfile(_ id: String) { arc_client_apply_profile(handle, id) }
 
     static func generateId() -> Data {
         var id = [UInt8](repeating: 0, count: 16)
@@ -143,6 +160,8 @@ final class CoreClient {
               input: e.input != 0, isDefaultInput: e.is_default_input != 0, route: s(e.route),
               features: e.features, panic: e.panic != 0,
               active: e.active != 0, lost: e.lost != 0, seq: e.seq,
-              tab: e.tab != 0, group: s(e.group), detail: s(e.detail))
+              tab: e.tab != 0, group: s(e.group), detail: s(e.detail),
+              profileFlags: e.profile_flags, days: e.days, startMin: Int(e.start_min), endMin: Int(e.end_min),
+              network: s(e.network), nEndpoints: Int(e.n_endpoints), nApps: Int(e.n_apps))
     }
 }

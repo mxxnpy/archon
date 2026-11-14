@@ -15,6 +15,7 @@ namespace {
 
 JavaVM* g_vm = nullptr;
 jmethodID g_on_audio = nullptr;
+jmethodID g_on_profile = nullptr;
 jmethodID g_on_event = nullptr;
 pthread_key_t g_detach_key;
 
@@ -65,11 +66,21 @@ void on_event(void* user, const arc_event* e) {
         env->PopLocalFrame(nullptr);
         return;
     }
+    if (e->type == ARC_EV_PROFILE) {  // 1.5: its own callback (profile fields)
+        env->PushLocalFrame(8);
+        env->CallVoidMethod(h->target, g_on_profile, str(env, e->id), str(env, e->name), jint(e->profile_flags),
+                            jint(e->days), jint(e->start_min), jint(e->end_min), str(env, e->network),
+                            str(env, e->endpoint_id), str(env, e->detail), jint(e->n_endpoints), jint(e->n_apps));
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->PopLocalFrame(nullptr);
+        return;
+    }
     env->PushLocalFrame(16);
     const jint flags = (e->muted ? 1 : 0) | (e->is_default ? 2 : 0) | (e->playing ? 4 : 0) | (e->system_sounds ? 8 : 0) |
                        (e->input ? 16 : 0) | (e->is_default_input ? 32 : 0) | (e->panic ? 64 : 0) |
                        (e->active ? 128 : 0) | (e->tab ? 256 : 0);
-    env->CallVoidMethod(h->target, g_on_event, jint(e->type), jint(e->status), jint(e->error), str(env, e->message),
+    env->CallVoidMethod(h->target, g_on_event, jint(e->type), jint(e->status), jint(e->error),
+                        str(env, e->type == ARC_EV_CONTEXT ? e->network : e->message),
                         str(env, e->id), str(env, e->endpoint_id), str(env, e->name), str(env, e->icon_key),
                         jint(e->pid), jint(e->volume), flags, jint(e->meter), bytes(env, e->data, e->data_len),
                         str(env, e->route), jint(e->features), str(env, e->group), str(env, e->detail));
@@ -92,7 +103,8 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     if (!cls) return JNI_ERR;
     g_on_event = env->GetMethodID(cls, "onEvent", "(III[B[B[B[B[BIIII[B[BI[B[B)V");
     g_on_audio = env->GetMethodID(cls, "onAudio", "([BJZ)V");
-    return g_on_event && g_on_audio ? JNI_VERSION_1_6 : JNI_ERR;
+    g_on_profile = env->GetMethodID(cls, "onProfile", "([B[BIIII[B[B[BII)V");
+    return g_on_event && g_on_audio && g_on_profile ? JNI_VERSION_1_6 : JNI_ERR;
 }
 
 JNIEXPORT jlong JNICALL Java_dev_archon_app_core_NativeClient_nativeCreate(JNIEnv* env, jobject self, jbyteArray id,
@@ -212,6 +224,23 @@ JNIEXPORT jboolean JNICALL Java_dev_archon_app_core_NativeClient_nativeStreamSta
                                                                                 jboolean mute_pc) {
     if (!H(p)) return JNI_FALSE;
     return arc_client_stream_start(H(p)->client, mute_pc ? ARC_STREAM_MUTE_PC : 0u, nullptr) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL Java_dev_archon_app_core_NativeClient_nativeSaveProfile(
+    JNIEnv* env, jobject, jlong p, jbyteArray id, jbyteArray name, jint flags, jint days, jint start, jint end,
+    jbyteArray network, jbyteArray output_id, jbyteArray output_name, jboolean capture) {
+    if (!H(p)) return;
+    arc_client_save_profile(H(p)->client, utf8(env, id).c_str(), utf8(env, name).c_str(), uint8_t(flags), uint8_t(days),
+                            uint16_t(start), uint16_t(end), utf8(env, network).c_str(), utf8(env, output_id).c_str(),
+                            utf8(env, output_name).c_str(), capture ? 1 : 0);
+}
+
+JNIEXPORT void JNICALL Java_dev_archon_app_core_NativeClient_nativeDeleteProfile(JNIEnv* env, jobject, jlong p, jbyteArray id) {
+    if (H(p)) arc_client_delete_profile(H(p)->client, utf8(env, id).c_str());
+}
+
+JNIEXPORT void JNICALL Java_dev_archon_app_core_NativeClient_nativeApplyProfile(JNIEnv* env, jobject, jlong p, jbyteArray id) {
+    if (H(p)) arc_client_apply_profile(H(p)->client, utf8(env, id).c_str());
 }
 
 JNIEXPORT void JNICALL Java_dev_archon_app_core_NativeClient_nativeStreamStop(JNIEnv*, jobject, jlong p) {
