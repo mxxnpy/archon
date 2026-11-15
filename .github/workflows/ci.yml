@@ -25,6 +25,23 @@ jobs:
         run: build/agent-windows/tabs-e2e/Archon.exe
       - name: Build browser extension
         run: node browser-extension/build.mjs
+      # Each store zip must open with Windows' own unzip and hold exactly the built folder.
+      - name: Check extension zips
+        shell: pwsh
+        run: |
+          foreach ($z in Get-ChildItem browser-extension/dist/*.zip) {
+            $target = ($z.BaseName -split '-')[2]
+            $out = Join-Path $env:RUNNER_TEMP "zipcheck-$target"
+            Expand-Archive $z.FullName $out -Force
+            $want = Get-ChildItem -Recurse -File "browser-extension/dist/$target"
+            $got = Get-ChildItem -Recurse -File $out
+            if ($want.Count -ne $got.Count) { throw "$($z.Name): $($got.Count) files, expected $($want.Count)" }
+            foreach ($f in $want) {
+              $rel = $f.FullName.Substring((Resolve-Path "browser-extension/dist/$target").Path.Length)
+              if ((Get-FileHash $f.FullName).Hash -ne (Get-FileHash (Join-Path $out $rel)).Hash) { throw "$($z.Name): $rel differs" }
+            }
+            "$($z.Name): $($got.Count) files OK"
+          }
       # The Archon window over a made-up mixer, every state, as PNGs.
       - name: Window screenshots
         shell: pwsh

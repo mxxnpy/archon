@@ -5,7 +5,7 @@
 import { mkdirSync, rmSync, copyFileSync, writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deflateSync, crc32 } from "node:zlib";
+import { deflateSync, deflateRawSync, crc32 } from "node:zlib";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -81,7 +81,7 @@ function zip(files) {
   const local = [], central = [];
   let offset = 0;
   for (const [name, data] of files) {
-    const comp = deflateSync(data, { level: 9 });
+    const comp = deflateRawSync(data, { level: 9 });  // zip method 8 is raw deflate, not zlib
     const n = Buffer.from(name);
     const h = Buffer.alloc(30);
     h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(0, 6); h.writeUInt16LE(8, 8);
