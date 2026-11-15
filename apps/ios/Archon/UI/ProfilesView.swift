@@ -67,13 +67,19 @@ private struct ProfileCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .accessibilityValue(profile.active ? String(localized: "em uso") : "")
-            Button { model.applyProfile(profile.id) } label: {
-                Text("Aplicar").font(.archonCaption.weight(.semibold)).foregroundStyle(Archon.ink)
-                    .padding(.horizontal, 16).frame(minHeight: 44)
-                    .background(Archon.accent, in: Capsule())
+            if profile.active {
+                // Already in force: a label, not another yellow button (one accent action per screen).
+                Text("Em uso").font(.archonCaption.weight(.semibold)).foregroundStyle(Archon.accent)
+                    .padding(.horizontal, 12).frame(minHeight: 44)
+            } else {
+                Button { model.applyProfile(profile.id) } label: {
+                    Text("Aplicar").font(.archonCaption.weight(.semibold)).foregroundStyle(Archon.paper)
+                        .padding(.horizontal, 16).frame(minHeight: 44)
+                        .background(Archon.track, in: Capsule())
+                }
+                .disabled(model.status != .connected)
+                .accessibilityLabel(String(localized: "Aplicar \(profile.name)"))
             }
-            .disabled(model.status != .connected)
-            .accessibilityLabel(String(localized: "Aplicar \(profile.name)"))
             Button(action: onEdit) {
                 Image(systemName: "slider.horizontal.3").foregroundStyle(Archon.paper)
                     .frame(width: 44, height: 44).background(Archon.raised, in: Circle())

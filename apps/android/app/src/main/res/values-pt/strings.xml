@@ -91,6 +91,7 @@
     <string name="profile_n">Perfil %1$d</string>
     <string name="save_current_as_profile">Salvar o som atual como perfil</string>
     <string name="in_use">em uso</string>
+    <string name="in_use_label">Em uso</string>
     <string name="apply">Aplicar</string>
     <string name="apply_profile">Aplicar %1$s</string>
     <string name="edit_profile_named">Editar %1$s</string>

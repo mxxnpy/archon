@@ -149,10 +149,16 @@ private fun ProfileCard(p: ProfileInfo, live: Boolean, onApply: () -> Unit, onEd
         }
         Spacer(Modifier.width(12.dp))
         val applyLabel = stringResource(R.string.apply_profile, p.name)
-        TextButton(onClick = onApply, enabled = live,
-            modifier = Modifier.heightIn(min = 44.dp).background(Archon.Accent, CircleShape)
-                .semantics { contentDescription = applyLabel }) {
-            Text(stringResource(R.string.apply), style = Type.Caption, color = Archon.Ink)
+        if (p.active) {
+            // Already in force: a label, not another yellow button (one accent action per screen).
+            Text(stringResource(R.string.in_use_label), style = Type.Caption, color = Archon.Accent,
+                modifier = Modifier.padding(horizontal = 12.dp))
+        } else {
+            TextButton(onClick = onApply, enabled = live,
+                modifier = Modifier.heightIn(min = 44.dp).background(Archon.Track, CircleShape)
+                    .semantics { contentDescription = applyLabel }) {
+                Text(stringResource(R.string.apply), style = Type.Caption, color = Archon.Paper)
+            }
         }
         Spacer(Modifier.width(8.dp))
         val editLabel = stringResource(R.string.edit_profile_named, p.name)
