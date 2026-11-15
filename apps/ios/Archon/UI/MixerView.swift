@@ -18,7 +18,12 @@ struct MixerView: View {
                     VStack(spacing: 12) {
                         if model.panic { PanicBanner() }
                         if model.listening { ListeningBanner() }
-                        if let err = model.listenError {
+                        if let detail = model.listenStartError {
+                            Text(String(localized: "Não foi possível iniciar o áudio no iPhone: \(detail)"))
+                                .font(.archonCaption).foregroundStyle(Archon.warn)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
+                                .onTapGesture { model.listenStartError = nil }
+                        } else if let err = model.listenError {
                             Text(ListenText.of(err)).font(.archonCaption).foregroundStyle(Archon.warn)
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
                                 .onTapGesture { model.listenError = nil }

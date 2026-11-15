@@ -128,6 +128,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var listening = false
     /// Why listening stopped on its own (CoreErr code), shown once.
     @Published var listenError: Int?
+    @Published var listenStartError: String?
     /// Mute the PC's speakers while listening (remembered).
     @Published var listenMutesPC = UserDefaults.standard.object(forKey: "listenMutesPC") as? Bool ?? true {
         didSet { UserDefaults.standard.set(listenMutesPC, forKey: "listenMutesPC") }
@@ -397,14 +398,16 @@ final class AppModel: ObservableObject {
 
     func startListening() {
         guard !listening, status == .connected else { return }
+        listenError = nil
+        listenStartError = nil
         do {
             try player.start()
         } catch {
-            listenError = CoreErr.busy
+            let nsError = error as NSError
+            listenStartError = "\(error.localizedDescription) [\(nsError.domain):\(nsError.code)]"
             return
         }
         listening = true
-        listenError = nil
         if !client.streamStart(mutePC: listenMutesPC) { stopListening() }
     }
 

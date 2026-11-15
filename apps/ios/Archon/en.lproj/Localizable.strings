@@ -74,6 +74,7 @@
 "Ouvindo o PC no celular" = "Listening to the PC on this phone";
 "Parar" = "Stop";
 "Silenciar o PC enquanto ouço" = "Mute the PC while I listen";
+"Não foi possível iniciar o áudio no iPhone: %@" = "Couldn't start audio on this iPhone: %@";
 "O PC já está transmitindo para outros celulares ou não conseguiu capturar o som." = "The PC is already streaming to other phones or couldn't capture its sound.";
 "A saída de som do PC deixou de existir. Escolha outra e tente de novo." = "The PC's sound output went away. Pick another and try again.";
 "Não foi possível ouvir o PC agora. Tente de novo." = "Couldn't listen to the PC right now. Try again.";
